@@ -48,6 +48,10 @@ game or reload the UI.
 4. Shift-right-click an icon to remove it.
 5. Run `/ocd lock` when finished.
 
+While a bar is unlocked, drag one tracked icon onto another to swap them. This
+also works between two unlocked bars. Drag an icon onto another bar's `+` to
+move it to the end of that bar.
+
 Use `/ocd center` to center the active bar horizontally without changing its
 vertical position.
 
@@ -78,6 +82,7 @@ Their English and Russian names are recognized automatically.
 - Surprise Attack appears for 4 seconds after your attack is dodged.
 - Surprise Attack is shown only while targeting the enemy that dodged.
 - Active reactive abilities use a gold border and a countdown with tenths.
+- A proc that is still on ability cooldown uses a red border and a dimmed icon.
 - Empty locked bars are hidden and mixed bars close gaps left by inactive procs.
 
 Use `/ocd list` to find an entry number. If automatic recognition is not
@@ -88,6 +93,17 @@ available for the client locale, configure the spell manually:
 /ocd proc <entry> surprise
 /ocd proc <entry> off
 ```
+
+Each bar controls how active procs on ability cooldown are displayed:
+
+```text
+/ocd procstyle red   Show the proc with a red border until the cooldown ends.
+/ocd procstyle hide  Hide it until the cooldown ends.
+```
+
+The proc-window timer remains active in either mode. If the ability becomes
+ready before the four-second window expires, the icon appears or changes from
+red to gold with the remaining proc time.
 
 Nampower and SuperWoW events are used automatically when available. The addon
 also supports the standard localized Vanilla 1.12 combat log and does not
@@ -107,6 +123,8 @@ required event CVars and prints a one-time request to reload the UI.
 /ocd add <name>          Add a spell by exact spellbook name.
 /ocd item <itemID>       Add an item by numeric item ID.
 /ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
+/ocd procstyle <mode>     Set red or hide for the active bar.
+/ocd procdebug <mode>     Enable, disable, or show proc diagnostics.
 /ocd remove <n>          Remove entry n.
 /ocd move <a> <b>        Move entry a to position b.
 /ocd cols <1-12>         Set columns for the active bar.
@@ -135,6 +153,19 @@ required event CVars and prints a one-time request to reload the UI.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.3.1
+
+- Added per-bar `red` and `hide` behavior for procs during ability cooldowns.
+- Added red cooldown borders with dimmed icons and automatic gold transitions.
+- Added drag-and-drop swaps within and between unlocked bars.
+- Added moving entries to another bar by dropping them onto its `+`.
+- Prevented Nampower, `UNIT_COMBAT`, and combat-log duplicates from shifting
+  proc timers or resurrecting consumed procs.
+- Added support for both known `SPELL_MISS_*` Nampower argument layouts.
+- Removed transient `IsUsableSpell` failures and combat exit as proc-clearing
+  conditions.
+- Added localized incoming-parry fallback and `/ocd procdebug` diagnostics.
 
 ### 0.3.0
 
