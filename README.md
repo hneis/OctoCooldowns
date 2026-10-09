@@ -1,0 +1,126 @@
+# OctoCooldowns
+
+Retail-like personal cooldown bars for OctoWoW and Vanilla WoW 1.12.
+
+## Compatibility
+
+- OctoWoW / Vanilla WoW 1.12 (`Interface: 11200`)
+- Lua 5.0 and the legacy WoW API
+- No dependencies or OmniCC required
+
+## Install With GitAddonsManager
+
+Add this repository using its HTTPS clone URL:
+
+```text
+https://github.com/hneis/OctoCooldowns.git
+```
+
+GitAddonsManager should clone it to:
+
+```text
+<WoW>/Interface/AddOns/OctoCooldowns
+```
+
+The final path to the addon manifest must be
+`<WoW>/Interface/AddOns/OctoCooldowns/OctoCooldowns.toc`.
+
+If OctoCooldowns was installed manually, remove or rename the old addon folder
+before cloning it through GitAddonsManager. Character settings are stored under
+WoW's `WTF` directory and are not removed with the addon folder.
+
+## Manual Git Install
+
+Run this command from `<WoW>/Interface/AddOns`:
+
+```bash
+git clone https://github.com/hneis/OctoCooldowns.git
+```
+
+Use GitAddonsManager or `git pull` to install future updates, then restart the
+game or reload the UI.
+
+## Basic Workflow
+
+1. Run `/ocd unlock`.
+2. Drag a spell from the spellbook or an item from your bags onto `+`.
+3. Drag the panel to position it.
+4. Shift-right-click an icon to remove it.
+5. Run `/ocd lock` when finished.
+
+Use `/ocd center` to center the active bar horizontally without changing its
+vertical position.
+
+## Multiple Bars
+
+```text
+/ocd new Utility        Create a new bar and make it active.
+/ocd new Burst          Create another bar.
+/ocd bars               Show all bars; * marks the active one.
+/ocd bar 1              Select a bar by number.
+/ocd bar Utility        Select a bar by exact name.
+/ocd rename Defensives  Rename the active bar.
+/ocd delbar             Delete the active bar.
+/ocd delbar 2           Delete bar 2.
+```
+
+Each bar is configured independently. Commands such as `add`, `cols`, `size`,
+`gap`, `lock`, `clear`, and `center` affect only the active bar.
+
+## Commands
+
+```text
+/ocd                     Toggle lock/edit mode on the active bar.
+/ocd unlock              Unlock the active bar.
+/ocd lock                Lock the active bar.
+/ocd unlockall           Unlock all bars.
+/ocd lockall             Lock all bars.
+/ocd center              Horizontally center the active bar, keeping its Y.
+/ocd centerall           Horizontally center all bars, keeping each Y.
+/ocd add <name>          Add a spell by exact spellbook name.
+/ocd item <itemID>       Add an item by numeric item ID.
+/ocd remove <n>          Remove entry n.
+/ocd move <a> <b>        Move entry a to position b.
+/ocd cols <1-12>         Set columns for the active bar.
+/ocd size <20-80>        Set icon size for the active bar.
+/ocd gap <0-20>          Set icon gap for the active bar.
+/ocd update              Show the cooldown refresh interval.
+/ocd update <0.05-1.00>  Set the cooldown refresh interval in seconds.
+/ocd list                List entries in the active bar.
+/ocd clear               Clear the active bar.
+/ocd reset               Reset the active bar, keeping its name.
+/ocd resetall            Delete all bars and settings, then start fresh.
+/ocd help                Show in-game help.
+```
+
+## Behavior
+
+- Tracked icons remain visible when ready.
+- Ready abilities use full brightness.
+- Abilities on cooldown are dimmed and show the remaining time.
+- Global cooldowns of 1.8 seconds or less are ignored.
+- Items show their bag count in the bottom-right corner.
+- Item counts update on bag changes rather than every frame.
+- Cooldowns are polled every 0.10 seconds by default. Use `/ocd update 0.20`
+  for lower overhead.
+- Settings are stored per character in `OctoCooldownsDB`.
+- Dragging is the safest way to add localized spell names.
+
+## Changelog
+
+### 0.2.1
+
+- Stopped rescanning item stack counts every 0.10 seconds.
+- Scan bags only on `BAG_UPDATE`, login, and tracked item addition.
+- Added a configurable cooldown polling interval through `/ocd update`.
+
+### 0.2.0
+
+- Added multiple independent cooldown bars.
+- Added per-bar entries, columns, icon size, gap, lock state, and position.
+- Added horizontal centering for the active bar.
+- Added automatic migration of 0.1.x settings into the first bar.
+
+## License
+
+OctoCooldowns is available under the [MIT License](LICENSE).
