@@ -1,6 +1,6 @@
 # OctoCooldowns
 
-Retail-like personal cooldown bars for OctoWoW and Vanilla WoW 1.12.
+Personal cooldown and reactive ability bars for OctoWoW and Vanilla WoW 1.12.
 
 ## Compatibility
 
@@ -67,6 +67,33 @@ vertical position.
 Each bar is configured independently. Commands such as `add`, `cols`, `size`,
 `gap`, `lock`, `clear`, and `center` affect only the active bar.
 
+## Reactive Abilities
+
+Drag `Riposte` or `Surprise Attack` from the spellbook onto a bar as usual.
+Their English and Russian names are recognized automatically.
+
+- In edit mode, reactive abilities remain visible but dimmed.
+- In locked mode, they are completely hidden until their condition occurs.
+- Riposte appears for 4 seconds after you parry an incoming attack.
+- Surprise Attack appears for 4 seconds after your attack is dodged.
+- Surprise Attack is shown only while targeting the enemy that dodged.
+- Active reactive abilities use a gold border and a countdown with tenths.
+- Empty locked bars are hidden and mixed bars close gaps left by inactive procs.
+
+Use `/ocd list` to find an entry number. If automatic recognition is not
+available for the client locale, configure the spell manually:
+
+```text
+/ocd proc <entry> riposte
+/ocd proc <entry> surprise
+/ocd proc <entry> off
+```
+
+Nampower and SuperWoW events are used automatically when available. The addon
+also supports the standard localized Vanilla 1.12 combat log and does not
+require either extension. On older Nampower versions the addon enables the
+required event CVars and prints a one-time request to reload the UI.
+
 ## Commands
 
 ```text
@@ -79,6 +106,7 @@ Each bar is configured independently. Commands such as `add`, `cols`, `size`,
 /ocd centerall           Horizontally center all bars, keeping each Y.
 /ocd add <name>          Add a spell by exact spellbook name.
 /ocd item <itemID>       Add an item by numeric item ID.
+/ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
 /ocd remove <n>          Remove entry n.
 /ocd move <a> <b>        Move entry a to position b.
 /ocd cols <1-12>         Set columns for the active bar.
@@ -107,6 +135,16 @@ Each bar is configured independently. Commands such as `add`, `cols`, `size`,
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.3.0
+
+- Added temporary reactive icons for Riposte and Surprise Attack.
+- Added four-second proc countdowns and gold active borders.
+- Added target-aware Surprise Attack tracking.
+- Added automatic Nampower/SuperWoW integration with a localized Vanilla
+  combat-log fallback.
+- Added automatic English/Russian spell recognition and `/ocd proc` overrides.
+- Added dynamic locked-bar layout with no gaps from inactive reactive entries.
 
 ### 0.2.1
 

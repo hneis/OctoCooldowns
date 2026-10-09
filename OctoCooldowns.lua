@@ -1,4 +1,4 @@
--- OctoCooldowns 0.2.1
+-- OctoCooldowns 0.3.0
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -8,10 +8,31 @@ local DEFAULT_UPDATE_INTERVAL = 0.10
 local MIN_UPDATE_INTERVAL = 0.05
 local MAX_UPDATE_INTERVAL = 1.00
 local GCD_THRESHOLD = 1.80
+local REACTIVE_DURATION = 4.00
 local updateElapsed = 0
 local barFrames = {}
 local itemCountCache = {}
 local bagCountsDirty = false
+local targetSerial = 0
+local reactivePatterns = {}
+local enhancedReactiveEventsRegistered = false
+local reactiveState = {
+  riposte = { expires = 0 },
+  surprise = { expires = 0 }
+}
+
+local REACTIVE_NAMES = {
+  ["Riposte"] = "riposte",
+  ["riposte"] = "riposte",
+  ["Ответный удар"] = "riposte",
+  ["ответный удар"] = "riposte",
+  ["Surprise Attack"] = "surprise",
+  ["surprise attack"] = "surprise",
+  ["Неожиданная атака"] = "surprise",
+  ["неожиданная атака"] = "surprise",
+  ["Внезапное нападение"] = "surprise",
+  ["внезапное нападение"] = "surprise"
+}
 
 local function Chat(msg)
   if DEFAULT_CHAT_FRAME then
@@ -24,6 +45,119 @@ local function Trim(s)
   s = string.gsub(s, "^%s+", "")
   s = string.gsub(s, "%s+$", "")
   return s
+end
+
+local function ReactiveKindByName(name)
+  if not name then return nil end
+  return REACTIVE_NAMES[name] or REACTIVE_NAMES[string.lower(name)]
+end
+
+local function IsReactiveEntry(entry)
+  return entry and entry.kind == "spell" and (entry.reactive == "riposte" or entry.reactive == "surprise")
+end
+
+local PATTERN_MAGIC = {
+  ["("] = true, [")"] = true, ["."] = true, ["%"] = true,
+  ["+"] = true, ["-"] = true, ["*"] = true, ["?"] = true,
+  ["["] = true, ["]"] = true, ["^"] = true, ["$"] = true
+}
+
+local function CompileGlobalFormat(template)
+  if type(template) ~= "string" or template == "" then return nil end
+  local out = "^"
+  local slots = {}
+  local nextSlot = 1
+  local i = 1
+  local n = string.len(template)
+
+  while i <= n do
+    local c = string.sub(template, i, i)
+    if c == "%" then
+      local rest = string.sub(template, i)
+      local _, tokenEnd, position, kind = string.find(rest, "^%%(%d+)%$([sdf])")
+      local slot = nil
+      if tokenEnd then
+        slot = tonumber(position)
+      else
+        _, tokenEnd, position, kind = string.find(rest, "^%%(%d+)([sdf])")
+        if tokenEnd then
+          slot = tonumber(position)
+        else
+          _, tokenEnd, kind = string.find(rest, "^%%([sdf])")
+        end
+        if tokenEnd then
+          if not slot then
+            slot = nextSlot
+            nextSlot = nextSlot + 1
+          end
+        end
+      end
+
+      if tokenEnd then
+        table.insert(slots, slot)
+        if kind == "s" then
+          out = out .. "(.-)"
+        elseif kind == "d" then
+          out = out .. "(%d+)"
+        else
+          out = out .. "([%d%.]+)"
+        end
+        i = i + tokenEnd
+      elseif string.sub(template, i + 1, i + 1) == "%" then
+        out = out .. "%%"
+        i = i + 2
+      else
+        out = out .. "%%"
+        i = i + 1
+      end
+    else
+      if PATTERN_MAGIC[c] then out = out .. "%" end
+      out = out .. c
+      i = i + 1
+    end
+  end
+
+  return { pattern = out .. "$", slots = slots }
+end
+
+local function MatchGlobalFormat(message, compiled)
+  if not message or not compiled then return nil end
+  local startPos, endPos, a, b, c, d, e, f = string.find(message, compiled.pattern)
+  if not startPos then return nil end
+  local captures = { a, b, c, d, e, f }
+  local values = {}
+  local i = 1
+  while i <= table.getn(compiled.slots) do
+    values[compiled.slots[i]] = captures[i]
+    i = i + 1
+  end
+  return values
+end
+
+local function InitializeReactivePatterns()
+  reactivePatterns.whiteDodge = CompileGlobalFormat(VSDODGESELFOTHER)
+  reactivePatterns.spellDodge = CompileGlobalFormat(SPELLDODGEDSELFOTHER)
+  reactivePatterns.spellResults = {}
+
+  local function AddResultPattern(template)
+    local compiled = CompileGlobalFormat(template)
+    if compiled then table.insert(reactivePatterns.spellResults, compiled) end
+  end
+
+  AddResultPattern(SPELLLOGSELFOTHER)
+  AddResultPattern(SPELLLOGCRITSELFOTHER)
+  AddResultPattern(SPELLLOGSCHOOLSELFOTHER)
+  AddResultPattern(SPELLLOGCRITSCHOOLSELFOTHER)
+  AddResultPattern(SPELLLOGABSORBSELFOTHER)
+  AddResultPattern(SPELLMISSSELFOTHER)
+  AddResultPattern(SPELLDODGEDSELFOTHER)
+  AddResultPattern(SPELLPARRIEDSELFOTHER)
+  AddResultPattern(SPELLBLOCKEDSELFOTHER)
+  AddResultPattern(SPELLRESISTSELFOTHER)
+  AddResultPattern(SPELLIMMUNESELFOTHER)
+  AddResultPattern(SPELLEVADEDSELFOTHER)
+  AddResultPattern(SPELLDEFLECTEDSELFOTHER)
+  AddResultPattern(SPELLREFLECTSELFOTHER)
 end
 
 local function DefaultBarName(index)
@@ -55,11 +189,19 @@ local function EnsureBar(bar, index)
   if bar.x == nil then bar.x = 0 end
   if bar.y == nil then bar.y = -120 - ((index - 1) * 60) end
   if not bar.entries then bar.entries = {} end
+  local i = 1
+  while i <= table.getn(bar.entries) do
+    local entry = bar.entries[i]
+    if entry.kind == "spell" and entry.reactive == nil then
+      entry.reactive = ReactiveKindByName(entry.name)
+    end
+    i = i + 1
+  end
 end
 
 local function EnsureDB()
   if not OctoCooldownsDB then
-    OctoCooldownsDB = { version = 3, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 4, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     return
   end
 
@@ -75,11 +217,11 @@ local function EnsureDB()
     if old.x ~= nil then bar.x = old.x end
     if old.y ~= nil then bar.y = old.y end
     if old.entries then bar.entries = old.entries end
-    OctoCooldownsDB = { version = 3, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
+    OctoCooldownsDB = { version = 4, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
     Chat("migrated 0.1 settings to multi-bar format")
   end
 
-  OctoCooldownsDB.version = 3
+  OctoCooldownsDB.version = 4
   if not OctoCooldownsDB.updateInterval then OctoCooldownsDB.updateInterval = DEFAULT_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval < MIN_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MIN_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval > MAX_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MAX_UPDATE_INTERVAL end
@@ -155,6 +297,255 @@ local function ResolveSpell(entry)
   entry._rank = rank
   entry._texture = texture
   return slot
+end
+
+local function LegacyTrue(value)
+  return value == true or value == 1
+end
+
+local function NormalizeGuid(guid)
+  if guid == nil then return nil end
+  return tostring(guid)
+end
+
+local function GetUnitGuidCompat(unit)
+  if type(GetUnitGUID) == "function" then
+    local guid = GetUnitGUID(unit)
+    if guid then return NormalizeGuid(guid) end
+  end
+  if type(UnitExists) == "function" then
+    local exists, guid = UnitExists(unit)
+    if exists and guid then return NormalizeGuid(guid) end
+    if exists and exists ~= true and exists ~= 1 then return NormalizeGuid(exists) end
+  end
+  return nil
+end
+
+local function CurrentTargetName()
+  if type(UnitExists) == "function" and not UnitExists("target") then return nil end
+  if type(UnitName) ~= "function" then return nil end
+  return UnitName("target")
+end
+
+local function ReactiveTargetMatches(kind)
+  if kind ~= "surprise" then return true end
+  local state = reactiveState.surprise
+  if not state.targetGuid and not state.targetName then return true end
+
+  local currentGuid = GetUnitGuidCompat("target")
+  if state.targetGuid and currentGuid then
+    return state.targetGuid == currentGuid
+  end
+
+  local currentName = CurrentTargetName()
+  if state.targetName and currentName then
+    if state.targetName ~= currentName then return false end
+    if state.targetSerial then return state.targetSerial == targetSerial end
+    return true
+  end
+
+  if not currentGuid and not currentName then return false end
+  return true
+end
+
+local function ClearReactiveState(kind)
+  local state = reactiveState[kind]
+  if not state then return false end
+  local changed = (state.expires or 0) > 0
+  state.expires = 0
+  state.triggeredAt = nil
+  state.targetGuid = nil
+  state.targetName = nil
+  state.targetSerial = nil
+  state.apiReadySeen = nil
+  state.hiddenByApi = nil
+  return changed
+end
+
+function OCD:ClearReactiveStates(rebuild)
+  local changed = ClearReactiveState("riposte")
+  if ClearReactiveState("surprise") then changed = true end
+  if changed and rebuild and OctoCooldownsDB then self:RebuildAll(false) end
+end
+
+function OCD:ActivateReactive(kind, targetGuid, targetName)
+  local state = reactiveState[kind]
+  if not state then return end
+  local now = GetTime()
+  targetGuid = NormalizeGuid(targetGuid)
+
+  local duplicateTarget = kind ~= "surprise"
+  if kind == "surprise" then
+    if state.targetGuid and targetGuid and state.targetGuid == targetGuid then
+      duplicateTarget = true
+    elseif state.targetName and targetName and state.targetName == targetName then
+      if not state.targetSerial or state.targetSerial == targetSerial then duplicateTarget = true end
+    elseif not state.targetGuid and not state.targetName and not targetGuid and not targetName then
+      duplicateTarget = true
+    else
+      local currentGuid = GetUnitGuidCompat("target")
+      local currentName = CurrentTargetName()
+      if state.targetGuid and currentGuid == state.targetGuid and targetName and currentName == targetName then
+        duplicateTarget = true
+      end
+    end
+  end
+
+  if duplicateTarget and not state.hiddenByApi and state.triggeredAt and now - state.triggeredAt < 0.25 then
+    if not state.targetGuid and targetGuid then state.targetGuid = targetGuid end
+    if not state.targetName and targetName then state.targetName = targetName end
+    return
+  end
+
+  state.expires = now + REACTIVE_DURATION
+  state.triggeredAt = now
+  state.apiReadySeen = nil
+  state.hiddenByApi = nil
+  if kind == "surprise" then
+    state.targetGuid = targetGuid
+    state.targetName = targetName
+    local currentGuid = GetUnitGuidCompat("target")
+    local currentName = CurrentTargetName()
+    if not state.targetName and targetGuid and currentGuid == targetGuid then
+      state.targetName = currentName
+    end
+    if (targetGuid and currentGuid == targetGuid) or (targetName and currentName == targetName) then
+      state.targetSerial = targetSerial
+    elseif targetName and not targetGuid then
+      -- A late vanilla message cannot be tied safely after the target changed.
+      state.targetSerial = -1
+    end
+  else
+    state.targetGuid = nil
+    state.targetName = nil
+    state.targetSerial = nil
+  end
+
+  if OctoCooldownsDB then self:RebuildAll(false) end
+end
+
+local function ReactiveApiReady(entry)
+  if not entry or type(IsUsableSpell) ~= "function" then return nil end
+  if not entry._slot then ResolveSpell(entry) end
+  if not entry._slot then return nil end
+  local usable, noMana = IsUsableSpell(entry._slot, BOOK)
+  return LegacyTrue(usable) or LegacyTrue(noMana)
+end
+
+local function FindReactiveEntry(kind)
+  if not OctoCooldownsDB or not OctoCooldownsDB.bars then return nil end
+  local bi = 1
+  while bi <= table.getn(OctoCooldownsDB.bars) do
+    local bar = OctoCooldownsDB.bars[bi]
+    local ei = 1
+    while ei <= table.getn(bar.entries) do
+      local entry = bar.entries[ei]
+      if entry.reactive == kind then return entry end
+      ei = ei + 1
+    end
+    bi = bi + 1
+  end
+  return nil
+end
+
+function OCD:ProbeReactiveStates()
+  local now = GetTime()
+  local kinds = { "riposte", "surprise" }
+  local i = 1
+  while i <= table.getn(kinds) do
+    local kind = kinds[i]
+    local state = reactiveState[kind]
+    if (state.expires or 0) > 0 then
+      if state.expires <= now then
+        ClearReactiveState(kind)
+      else
+        local entry = FindReactiveEntry(kind)
+        local ready = ReactiveApiReady(entry)
+        if ready == true then
+          state.apiReadySeen = true
+          state.hiddenByApi = nil
+        elseif ready == false and state.apiReadySeen then
+          state.hiddenByApi = true
+        end
+      end
+    end
+    i = i + 1
+  end
+end
+
+local function ReactiveEntryIsActive(entry)
+  if not IsReactiveEntry(entry) then return false end
+  local state = reactiveState[entry.reactive]
+  if not state or (state.expires or 0) <= GetTime() then return false end
+  if state.hiddenByApi then return false end
+  return ReactiveTargetMatches(entry.reactive)
+end
+
+local function EntryShouldShow(entry, bar)
+  if not IsReactiveEntry(entry) then return true end
+  if not bar.locked then return true end
+  return ReactiveEntryIsActive(entry)
+end
+
+local function BuildBarLayoutKey(bar)
+  local key = bar.locked and "L" or "U"
+  local i = 1
+  while i <= table.getn(bar.entries) do
+    key = key .. (EntryShouldShow(bar.entries[i], bar) and "1" or "0")
+    i = i + 1
+  end
+  return key
+end
+
+local function ReactiveKindBySpellID(spellID)
+  if not spellID or type(GetSpellIdForName) ~= "function" or not OctoCooldownsDB then return nil end
+  local bi = 1
+  while bi <= table.getn(OctoCooldownsDB.bars) do
+    local bar = OctoCooldownsDB.bars[bi]
+    local ei = 1
+    while ei <= table.getn(bar.entries) do
+      local entry = bar.entries[ei]
+      if IsReactiveEntry(entry) then
+        local entryID = GetSpellIdForName(entry.name)
+        if entryID and tonumber(entryID) == tonumber(spellID) then return entry.reactive end
+      end
+      ei = ei + 1
+    end
+    bi = bi + 1
+  end
+  return nil
+end
+
+function OCD:ClearReactiveFromSpellMessage(message)
+  if not message or not OctoCooldownsDB then return end
+  local spellName = nil
+  local patterns = reactivePatterns.spellResults or {}
+  local patternIndex = 1
+  while patternIndex <= table.getn(patterns) do
+    local values = MatchGlobalFormat(message, patterns[patternIndex])
+    if values and values[1] then
+      spellName = values[1]
+      break
+    end
+    patternIndex = patternIndex + 1
+  end
+  if not spellName then return end
+
+  local changed = false
+  local bi = 1
+  while bi <= table.getn(OctoCooldownsDB.bars) do
+    local bar = OctoCooldownsDB.bars[bi]
+    local ei = 1
+    while ei <= table.getn(bar.entries) do
+      local entry = bar.entries[ei]
+      if IsReactiveEntry(entry) and entry.name == spellName then
+        if ClearReactiveState(entry.reactive) then changed = true end
+      end
+      ei = ei + 1
+    end
+    bi = bi + 1
+  end
+  if changed then self:RebuildAll(false) end
 end
 
 local function TextureLooksValid(v)
@@ -330,6 +721,11 @@ local function CreateIcon(barIndex, index, parent)
         GameTooltip:SetText(name or ("Item " .. entry.itemID))
       end
     end
+    if entry.reactive == "riposte" then
+      GameTooltip:AddLine("Reactive: show for 4 sec after you parry", 1.0, 0.82, 0.1)
+    elseif entry.reactive == "surprise" then
+      GameTooltip:AddLine("Reactive: show for 4 sec after your target dodges", 1.0, 0.82, 0.1)
+    end
     if not bar.locked then
       GameTooltip:AddLine("Shift + Right Click: remove", 0.8, 0.8, 0.8)
     end
@@ -490,8 +886,24 @@ function OCD:RebuildBar(barIndex)
   if size < 20 then size = 20 end
   if gap < 0 then gap = 0 end
 
+  local visibleCount = 0
+  local countIndex = 1
+  while countIndex <= n do
+    if EntryShouldShow(bar.entries[countIndex], bar) then visibleCount = visibleCount + 1 end
+    countIndex = countIndex + 1
+  end
+
+  main._ocdLayoutKey = BuildBarLayoutKey(bar)
+  if bar.locked and visibleCount == 0 then
+    HideUnusedIcons(main, 1)
+    main.title:Hide()
+    main.drop:Hide()
+    main:Hide()
+    return
+  end
+
   local topOffset = bar.locked and 6 or 24
-  local totalCells = n + (bar.locked and 0 or 1)
+  local totalCells = visibleCount + (bar.locked and 0 or 1)
   if totalCells < 1 then totalCells = 1 end
   local rows = math.ceil(totalCells / cols)
   local actualCols = math.min(cols, totalCells)
@@ -513,39 +925,56 @@ function OCD:RebuildBar(barIndex)
   end
 
   local i = 1
+  local displayIndex = 0
   while i <= n do
     local entry = bar.entries[i]
     local b = main.icons[i]
-    if not b then
+    local shouldShow = EntryShouldShow(entry, bar)
+    if shouldShow and not b then
       b = CreateIcon(barIndex, i, main)
       main.icons[i] = b
     end
-    b._barIndex = barIndex
-    b._entryIndex = i
-    b:SetWidth(size)
-    b:SetHeight(size)
-    b:ClearAllPoints()
-    local row = math.floor((i - 1) / cols)
-    local col = math.mod(i - 1, cols)
-    b:SetPoint("TOPLEFT", main, "TOPLEFT", 6 + col * (size + gap), -topOffset - row * (size + gap))
+    if b then
+      b._barIndex = barIndex
+      b._entryIndex = i
+      if b._ocdEntry ~= entry then
+        b._ocdEntry = entry
+        b._ocdCooldownActive = nil
+        b._ocdTimerText = nil
+        b._ocdVisualMode = nil
+        b.border:SetTexture(0, 0, 0, 1)
+      end
 
-    if entry.kind == "spell" then
-      ResolveSpell(entry)
-      b.count:SetText("")
-      b._ocdCountText = ""
-      if entry._texture then b.icon:SetTexture(entry._texture) else b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
-    else
-      local name, texture = GetItemMeta(entry.itemID)
-      if name then entry.name = name end
-      entry._texture = texture
-      local count = itemCountCache[entry.itemID] or 0
-      local countText = ""
-      if count > 0 then countText = tostring(count) end
-      b.count:SetText(countText)
-      b._ocdCountText = countText
-      if texture then b.icon:SetTexture(texture) else b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
+      if shouldShow then
+        displayIndex = displayIndex + 1
+        b:SetWidth(size)
+        b:SetHeight(size)
+        b:ClearAllPoints()
+        local row = math.floor((displayIndex - 1) / cols)
+        local col = math.mod(displayIndex - 1, cols)
+        b:SetPoint("TOPLEFT", main, "TOPLEFT", 6 + col * (size + gap), -topOffset - row * (size + gap))
+
+        if entry.kind == "spell" then
+          ResolveSpell(entry)
+          b.count:SetText("")
+          b._ocdCountText = ""
+          if entry._texture then b.icon:SetTexture(entry._texture) else b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
+        else
+          local name, texture = GetItemMeta(entry.itemID)
+          if name then entry.name = name end
+          entry._texture = texture
+          local count = itemCountCache[entry.itemID] or 0
+          local countText = ""
+          if count > 0 then countText = tostring(count) end
+          b.count:SetText(countText)
+          b._ocdCountText = countText
+          if texture then b.icon:SetTexture(texture) else b.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") end
+        end
+        b:Show()
+      else
+        b:Hide()
+      end
     end
-    b:Show()
     i = i + 1
   end
   HideUnusedIcons(main, n + 1)
@@ -554,7 +983,7 @@ function OCD:RebuildBar(barIndex)
     main.drop:SetWidth(size)
     main.drop:SetHeight(size)
     main.drop:ClearAllPoints()
-    local di = n + 1
+    local di = visibleCount + 1
     local row = math.floor((di - 1) / cols)
     local col = math.mod(di - 1, cols)
     main.drop:SetPoint("TOPLEFT", main, "TOPLEFT", 6 + col * (size + gap), -topOffset - row * (size + gap))
@@ -597,12 +1026,42 @@ function OCD:AddSpellByName(name, barIndex)
     return false
   end
   local e = { kind = "spell", name = realName }
+  e.reactive = ReactiveKindByName(realName)
   e._slot = slot
   e._rank = rank
   e._texture = texture
   table.insert(bar.entries, e)
-  Chat("added spell to [" .. bar.name .. "]: " .. realName)
+  local reactiveLabel = ""
+  if e.reactive then reactiveLabel = " (reactive: " .. e.reactive .. ")" end
+  Chat("added spell to [" .. bar.name .. "]: " .. realName .. reactiveLabel)
   self:RebuildBar(barIndex)
+  return true
+end
+
+function OCD:SetEntryReactive(barIndex, entryIndex, mode)
+  local bar = GetBar(barIndex)
+  local entry = bar and bar.entries[entryIndex]
+  if not entry or entry.kind ~= "spell" then
+    Chat("proc entry must be a tracked spell")
+    return false
+  end
+
+  mode = string.lower(Trim(mode or ""))
+  if mode == "parry" then mode = "riposte" end
+  if mode == "dodge" then mode = "surprise" end
+  if mode == "off" or mode == "none" or mode == "normal" then mode = false end
+  if mode ~= false and mode ~= "riposte" and mode ~= "surprise" then
+    Chat("usage: /ocd proc <entry> riposte|surprise|off")
+    return false
+  end
+
+  entry.reactive = mode
+  self:RebuildBar(barIndex)
+  if mode then
+    Chat("entry " .. entryIndex .. " is reactive: " .. mode)
+  else
+    Chat("entry " .. entryIndex .. " uses normal cooldown tracking")
+  end
   return true
 end
 
@@ -700,41 +1159,74 @@ function OCD:UpdateBarCooldowns(barIndex)
     local e = bar.entries[i]
     local b = main.icons[i]
     if b and b:IsShown() then
-      local start, duration, enabled = 0, 0, 1
-      if e.kind == "spell" then
-        if not e._slot then ResolveSpell(e) end
-        if e._slot then
-          start, duration, enabled = GetSpellCooldown(e._slot, BOOK)
+      if IsReactiveEntry(e) then
+        local state = reactiveState[e.reactive]
+        local remain = 0
+        if state then remain = (state.expires or 0) - now end
+        local reactiveActive = remain > 0.05 and ReactiveTargetMatches(e.reactive) and not state.hiddenByApi
+        local timerText = ""
+        if reactiveActive then timerText = FormatTime(remain) end
+
+        if b._ocdVisualMode ~= "reactive" or b._ocdReactiveActive ~= reactiveActive then
+          if reactiveActive then
+            b.border:SetTexture(1.0, 0.82, 0.1, 1)
+            b.icon:SetVertexColor(1, 1, 1)
+          else
+            b.border:SetTexture(0, 0, 0, 1)
+            b.icon:SetVertexColor(0.35, 0.35, 0.35)
+          end
+          b._ocdVisualMode = "reactive"
+          b._ocdReactiveActive = reactiveActive
         end
-      elseif e.kind == "item" then
-        start, duration, enabled = GetItemCooldown(e.itemID)
-      end
-
-      start = start or 0
-      duration = duration or 0
-      local remain = 0
-      if start > 0 and duration > GCD_THRESHOLD then
-        remain = (start + duration) - now
-      end
-
-      local cooldownActive = false
-      local timerText = ""
-      if remain > 0.05 then
-        cooldownActive = true
-        timerText = FormatTime(remain)
-      end
-
-      if b._ocdCooldownActive ~= cooldownActive then
-        if cooldownActive then
-          b.icon:SetVertexColor(0.35, 0.35, 0.35)
-        else
-          b.icon:SetVertexColor(1, 1, 1)
+        if b._ocdTimerText ~= timerText then
+          b.timer:SetText(timerText)
+          b._ocdTimerText = timerText
         end
-        b._ocdCooldownActive = cooldownActive
-      end
-      if b._ocdTimerText ~= timerText then
-        b.timer:SetText(timerText)
-        b._ocdTimerText = timerText
+      else
+        if b._ocdVisualMode ~= "cooldown" then
+          b._ocdVisualMode = "cooldown"
+          b._ocdCooldownActive = nil
+          b._ocdTimerText = nil
+          b._ocdReactiveActive = nil
+          b.border:SetTexture(0, 0, 0, 1)
+        end
+
+        local start, duration, enabled = 0, 0, 1
+        if e.kind == "spell" then
+          if not e._slot then ResolveSpell(e) end
+          if e._slot then
+            start, duration, enabled = GetSpellCooldown(e._slot, BOOK)
+          end
+        elseif e.kind == "item" then
+          start, duration, enabled = GetItemCooldown(e.itemID)
+        end
+
+        start = start or 0
+        duration = duration or 0
+        local remain = 0
+        if start > 0 and duration > GCD_THRESHOLD then
+          remain = (start + duration) - now
+        end
+
+        local cooldownActive = false
+        local timerText = ""
+        if remain > 0.05 then
+          cooldownActive = true
+          timerText = FormatTime(remain)
+        end
+
+        if b._ocdCooldownActive ~= cooldownActive then
+          if cooldownActive then
+            b.icon:SetVertexColor(0.35, 0.35, 0.35)
+          else
+            b.icon:SetVertexColor(1, 1, 1)
+          end
+          b._ocdCooldownActive = cooldownActive
+        end
+        if b._ocdTimerText ~= timerText then
+          b.timer:SetText(timerText)
+          b._ocdTimerText = timerText
+        end
       end
     end
     i = i + 1
@@ -743,6 +1235,15 @@ end
 
 function OCD:UpdateCooldowns()
   if not OctoCooldownsDB then return end
+  self:ProbeReactiveStates()
+  local layoutIndex = 1
+  while layoutIndex <= table.getn(OctoCooldownsDB.bars) do
+    local frame = barFrames[layoutIndex]
+    local bar = GetBar(layoutIndex)
+    local layoutKey = BuildBarLayoutKey(bar)
+    if frame and frame._ocdLayoutKey ~= layoutKey then self:RebuildBar(layoutIndex) end
+    layoutIndex = layoutIndex + 1
+  end
   local i = 1
   while i <= table.getn(OctoCooldownsDB.bars) do
     self:UpdateBarCooldowns(i)
@@ -811,7 +1312,9 @@ function OCD:List(barIndex)
   while i <= n do
     local e = bar.entries[i]
     if e.kind == "spell" then
-      Chat(i .. ". spell: " .. (e.name or "?"))
+      local reactiveLabel = ""
+      if e.reactive then reactiveLabel = " [proc: " .. e.reactive .. "]" end
+      Chat(i .. ". spell: " .. (e.name or "?") .. reactiveLabel)
     else
       Chat(i .. ". item: " .. (e.name or "?") .. " [" .. tostring(e.itemID) .. "]")
     end
@@ -877,12 +1380,127 @@ function OCD:ResetBar(barIndex)
   Chat("reset [" .. name .. "]")
 end
 
+local function TargetGuidForName(name)
+  if name and CurrentTargetName() == name then return GetUnitGuidCompat("target") end
+  return nil
+end
+
+function OCD:HandleReactiveCombatMessage(eventName, message)
+  if not message then return end
+
+  if eventName == "CHAT_MSG_SPELL_SELF_DAMAGE" or eventName == "CHAT_MSG_SPELL_DAMAGESHIELDS_ON_SELF" then
+    self:ClearReactiveFromSpellMessage(message)
+  end
+
+  if eventName == "CHAT_MSG_COMBAT_SELF_MISSES" then
+    local values = MatchGlobalFormat(message, reactivePatterns.whiteDodge)
+    if values then
+      self:ActivateReactive("surprise", TargetGuidForName(values[1]), values[1])
+    end
+  elseif eventName == "CHAT_MSG_SPELL_SELF_DAMAGE" or eventName == "CHAT_MSG_SPELL_DAMAGESHIELDS_ON_SELF" then
+    local values = MatchGlobalFormat(message, reactivePatterns.spellDodge)
+    if values then
+      self:ActivateReactive("surprise", TargetGuidForName(values[2]), values[2])
+    end
+  end
+end
+
+local function NampowerAtLeast(requiredMinor)
+  if type(GetNampowerVersion) ~= "function" then return false end
+  local ok, major, minor = pcall(GetNampowerVersion)
+  if not ok then return false end
+  major = tonumber(major) or 0
+  minor = tonumber(minor) or 0
+  return major > 2 or (major == 2 and minor >= requiredMinor)
+end
+
+local function SafeRegisterEvent(eventName)
+  pcall(function() OCD:RegisterEvent(eventName) end)
+end
+
+local function EnableNampowerEvents(cvarName)
+  if type(SetCVar) ~= "function" then return false end
+  if type(GetCVar) == "function" and tostring(GetCVar(cvarName)) == "1" then return false end
+  local ok = pcall(SetCVar, cvarName, "1")
+  return ok
+end
+
+function OCD:RegisterEnhancedReactiveEvents()
+  if enhancedReactiveEventsRegistered then return end
+  enhancedReactiveEventsRegistered = true
+
+  local reloadNeeded = false
+  if NampowerAtLeast(24) then
+    if EnableNampowerEvents("NP_EnableAutoAttackEvents") then reloadNeeded = true end
+    SafeRegisterEvent("AUTO_ATTACK_SELF")
+    SafeRegisterEvent("AUTO_ATTACK_OTHER")
+  end
+  if NampowerAtLeast(31) then
+    SafeRegisterEvent("SPELL_MISS_SELF")
+    SafeRegisterEvent("SPELL_MISS_OTHER")
+  end
+  if NampowerAtLeast(25) then
+    if EnableNampowerEvents("NP_EnableSpellGoEvents") then reloadNeeded = true end
+    if EnableNampowerEvents("NP_EnableSpellStartEvents") then reloadNeeded = true end
+    SafeRegisterEvent("SPELL_GO_SELF")
+    SafeRegisterEvent("SPELL_START_SELF")
+  end
+
+  -- SuperWoW exposes this event; pcall keeps stock 1.12 clients safe.
+  SafeRegisterEvent("UNIT_CASTEVENT")
+  if reloadNeeded then Chat("enabled Nampower combat events; reload once for enhanced tracking") end
+end
+
+function OCD:HandleEnhancedReactiveEvent(eventName, a1, a2, a3, a4, a5)
+  local playerGuid = GetUnitGuidCompat("player")
+
+  if eventName == "AUTO_ATTACK_SELF" then
+    -- In Nampower AUTO_ATTACK_SELF the player is the attack target.
+    local targetGuid = NormalizeGuid(a2)
+    if tonumber(a5) == 3 and (not playerGuid or targetGuid == playerGuid) then
+      self:ActivateReactive("riposte")
+    end
+  elseif eventName == "AUTO_ATTACK_OTHER" then
+    -- AUTO_ATTACK_OTHER includes observed units, so verify the player attacker.
+    local attackerGuid = NormalizeGuid(a1)
+    if playerGuid and attackerGuid == playerGuid and tonumber(a5) == 2 then
+      self:ActivateReactive("surprise", NormalizeGuid(a2), nil)
+    end
+  elseif eventName == "SPELL_MISS_SELF" then
+    -- Nampower: spellId, targetGuid, missInfo.
+    if tonumber(a3) == 3 then self:ActivateReactive("surprise", NormalizeGuid(a2), nil) end
+  elseif eventName == "SPELL_MISS_OTHER" then
+    -- Nampower: spellId, casterGuid, targetGuid, missInfo.
+    local targetGuid = NormalizeGuid(a3)
+    if playerGuid and targetGuid == playerGuid and tonumber(a4) == 4 then
+      self:ActivateReactive("riposte")
+    end
+  elseif eventName == "SPELL_GO_SELF" then
+    local kind = ReactiveKindBySpellID(a2)
+    if kind and ClearReactiveState(kind) and OctoCooldownsDB then self:RebuildAll(false) end
+  elseif eventName == "SPELL_START_SELF" then
+    local kind = ReactiveKindBySpellID(a3)
+    if kind and ClearReactiveState(kind) and OctoCooldownsDB then self:RebuildAll(false) end
+  elseif eventName == "UNIT_CASTEVENT" then
+    local caster = NormalizeGuid(a1)
+    local action = a3
+    local spellID = a4
+    if a2 == "START" then action = a2 end
+    local fromPlayer = a1 == "player" or (playerGuid and caster == playerGuid)
+    if fromPlayer and (action == "START" or action == "CAST") then
+      local kind = ReactiveKindBySpellID(spellID)
+      if kind and ClearReactiveState(kind) and OctoCooldownsDB then self:RebuildAll(false) end
+    end
+  end
+end
+
 local function Help()
   Chat("ACTIVE BAR commands:")
   Chat("/ocd new <name> | bar <n/name> | bars | rename <name> | delbar [n/name]")
   Chat("/ocd center  - center active bar horizontally")
   Chat("/ocd unlock | lock | unlockall | lockall")
   Chat("/ocd add <spell name> | item <itemID>")
+  Chat("/ocd proc <entry> riposte|surprise|off")
   Chat("/ocd remove <number> | move <from> <to>")
   Chat("/ocd cols <1-12> | size <20-80> | gap <0-20>")
   Chat("/ocd update [0.05-1.00]  - cooldown refresh interval; default 0.10")
@@ -946,6 +1564,13 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
     if rest == "" then Chat("usage: /ocd add <spell name>") else OCD:AddSpellByName(rest, active) end
   elseif cmd == "item" then
     OCD:AddItemByID(rest, active)
+  elseif cmd == "proc" or cmd == "reactive" then
+    local _, _, entryIndex, mode = string.find(rest, "^(%d+)%s+(%S+)$")
+    if entryIndex and mode then
+      OCD:SetEntryReactive(active, tonumber(entryIndex), mode)
+    else
+      Chat("usage: /ocd proc <entry> riposte|surprise|off")
+    end
   elseif cmd == "remove" or cmd == "rm" then
     local idx = tonumber(rest)
     if idx and bar.entries[idx] then
@@ -997,7 +1622,8 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
   elseif cmd == "reset" then
     OCD:ResetBar(active)
   elseif cmd == "resetall" then
-    OctoCooldownsDB = { version = 3, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 4, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     Chat("all settings reset")
   elseif cmd == "help" then
@@ -1012,10 +1638,23 @@ OCD:RegisterEvent("PLAYER_ENTERING_WORLD")
 OCD:RegisterEvent("SPELLS_CHANGED")
 OCD:RegisterEvent("LEARNED_SPELL_IN_TAB")
 OCD:RegisterEvent("BAG_UPDATE")
+OCD:RegisterEvent("UNIT_COMBAT")
+OCD:RegisterEvent("CHAT_MSG_COMBAT_SELF_MISSES")
+OCD:RegisterEvent("CHAT_MSG_SPELL_SELF_DAMAGE")
+OCD:RegisterEvent("CHAT_MSG_SPELL_DAMAGESHIELDS_ON_SELF")
+OCD:RegisterEvent("PLAYER_DEAD")
+OCD:RegisterEvent("PLAYER_REGEN_ENABLED")
+OCD:RegisterEvent("PLAYER_TARGET_CHANGED")
+OCD:RegisterEvent("UNIT_HEALTH")
+OCD:RegisterEvent("ACTIONBAR_UPDATE_USABLE")
+OCD:RegisterEvent("SPELL_UPDATE_USABLE")
 
 OCD:SetScript("OnEvent", function()
   if event == "VARIABLES_LOADED" then
+    InitializeReactivePatterns()
     EnsureDB()
+    OCD:RegisterEnhancedReactiveEvents()
+    OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     local i = 1
     while i <= table.getn(OctoCooldownsDB.bars) do
@@ -1030,11 +1669,39 @@ OCD:SetScript("OnEvent", function()
     if OctoCooldownsDB then OCD:RebuildAll(false) end
   elseif event == "PLAYER_ENTERING_WORLD" then
     if OctoCooldownsDB then
+      OCD:ClearReactiveStates(false)
       OCD:RebuildAll(true)
       OCD:RefreshItemCounts()
     end
   elseif event == "BAG_UPDATE" then
     if OctoCooldownsDB then bagCountsDirty = true end
+  elseif event == "UNIT_COMBAT" then
+    if arg1 == "player" and arg2 == "PARRY" then OCD:ActivateReactive("riposte") end
+  elseif event == "CHAT_MSG_COMBAT_SELF_MISSES"
+      or event == "CHAT_MSG_SPELL_SELF_DAMAGE"
+      or event == "CHAT_MSG_SPELL_DAMAGESHIELDS_ON_SELF" then
+    OCD:HandleReactiveCombatMessage(event, arg1)
+  elseif event == "AUTO_ATTACK_SELF"
+      or event == "AUTO_ATTACK_OTHER"
+      or event == "SPELL_MISS_SELF"
+      or event == "SPELL_MISS_OTHER"
+      or event == "SPELL_GO_SELF"
+      or event == "SPELL_START_SELF"
+      or event == "UNIT_CASTEVENT" then
+    local eventName = event
+    local a1, a2, a3, a4, a5 = arg1, arg2, arg3, arg4, arg5
+    OCD:HandleEnhancedReactiveEvent(eventName, a1, a2, a3, a4, a5)
+  elseif event == "PLAYER_DEAD" or event == "PLAYER_REGEN_ENABLED" then
+    OCD:ClearReactiveStates(true)
+  elseif event == "PLAYER_TARGET_CHANGED" then
+    targetSerial = targetSerial + 1
+    if OctoCooldownsDB then OCD:RebuildAll(false) end
+  elseif event == "UNIT_HEALTH" then
+    if arg1 == "target" and type(UnitIsDeadOrGhost) == "function" and UnitIsDeadOrGhost("target") then
+      if ClearReactiveState("surprise") and OctoCooldownsDB then OCD:RebuildAll(false) end
+    end
+  elseif event == "ACTIONBAR_UPDATE_USABLE" or event == "SPELL_UPDATE_USABLE" then
+    if OctoCooldownsDB then OCD:UpdateCooldowns() end
   end
 end)
 

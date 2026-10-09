@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: OctoCooldowns
-## Notes: Retail-like personal cooldown bars for OctoWoW / Vanilla 1.12
+## Notes: Personal cooldown and reactive ability bars for OctoWoW / Vanilla 1.12
 ## Author: hneis
-## Version: 0.2.1
+## Version: 0.3.0
 ## X-Website: https://github.com/hneis/OctoCooldowns
 ## X-Repository: https://github.com/hneis/OctoCooldowns.git
 ## SavedVariablesPerCharacter: OctoCooldownsDB
