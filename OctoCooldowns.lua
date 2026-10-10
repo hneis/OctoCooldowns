@@ -1,4 +1,4 @@
--- OctoCooldowns 0.4.3
+-- OctoCooldowns 0.4.4
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -14,6 +14,7 @@ local AURA_SCAN_INTERVAL = 0.50
 local TIMER_FONT_PATH = "Fonts\\ARIALN.TTF"
 local TIMER_FONT_SIZE = 14
 local TIMER_FONT_FLAGS = "OUTLINE"
+local TIMER_FONT_NATIVE_MAX = 32
 local TIMER_PREVIEW_TEXT = "12.3"
 local updateElapsed = 0
 local barFrames = {}
@@ -867,7 +868,9 @@ end
 local function ApplyTimerFont(button, bar)
   if not button or not button.timer or not button.timer.SetFont then return end
   local fontSize = tonumber(bar.timerFontSize) or TIMER_FONT_SIZE
-  button.timer:SetFont(TIMER_FONT_PATH, fontSize, TIMER_FONT_FLAGS)
+  local nativeSize = math.min(fontSize, TIMER_FONT_NATIVE_MAX)
+  button.timer:SetFont(TIMER_FONT_PATH, nativeSize, TIMER_FONT_FLAGS)
+  if button.timer.SetTextHeight then button.timer:SetTextHeight(fontSize) end
 end
 
 local function TimerTextWithPreview(bar, timerText)
@@ -1003,6 +1006,7 @@ local function CreateIcon(barIndex, index, parent)
 
   local timer = b:CreateFontString(nil, "OVERLAY")
   timer:SetFont(TIMER_FONT_PATH, TIMER_FONT_SIZE, TIMER_FONT_FLAGS)
+  if timer.SetTextHeight then timer:SetTextHeight(TIMER_FONT_SIZE) end
   timer:SetTextColor(1, 1, 1)
   timer:SetPoint("CENTER", b, "CENTER", 0, 0)
   timer:SetText("")

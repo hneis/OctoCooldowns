@@ -184,6 +184,11 @@ manually:
 
 ## Changelog
 
+### 0.4.4
+
+- Fixed timer sizes above the Vanilla runtime font raster limit.
+- Use `SetTextHeight` so values from 33 through 100 visibly scale.
+
 ### 0.4.3
 
 - Increased the maximum per-bar timer font size from 40 to 100.
