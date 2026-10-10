@@ -1,4 +1,4 @@
--- OctoCooldowns 0.4.2
+-- OctoCooldowns 0.4.3
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -226,7 +226,7 @@ local function EnsureBar(bar, index)
   if not bar.gap then bar.gap = 4 end
   if bar.timerFontSize ~= false then
     local timerFontSize = tonumber(bar.timerFontSize)
-    if timerFontSize and timerFontSize >= 8 and timerFontSize <= 40 then
+    if timerFontSize and timerFontSize >= 8 and timerFontSize <= 100 then
       bar.timerFontSize = math.floor(timerFontSize + 0.5)
     else
       bar.timerFontSize = false
@@ -1485,8 +1485,8 @@ function OCD:SetTimerFontSize(barIndex, value)
   end
 
   local fontSize = tonumber(value)
-  if not fontSize or fontSize < 8 or fontSize > 40 then
-    Chat("timer font size: 8-40 or reset")
+  if not fontSize or fontSize < 8 or fontSize > 100 then
+    Chat("timer font size: 8-100 or reset")
     return false
   end
   bar.timerFontSize = math.floor(fontSize + 0.5)
@@ -2072,7 +2072,7 @@ local function Help()
   Chat("/ocd proc <entry> riposte|surprise|off")
   Chat("/ocd aura <entry> bladeflurry|off")
   Chat("/ocd procstyle red|hide")
-  Chat("/ocd timerfont <8-40>|reset")
+  Chat("/ocd timerfont <8-100>|reset")
   Chat("/ocd procdebug on|off|status")
   Chat("/ocd remove <number> | move <from> <to>")
   Chat("/ocd cols <1-12> | size <20-80> | gap <0-20>")

@@ -148,7 +148,7 @@ manually:
 /ocd aura <n> <mode>     Set bladeflurry or off for spell entry n.
 /ocd procstyle <mode>     Set red or hide for the active bar.
 /ocd procdebug <mode>     Enable, disable, or show proc diagnostics.
-/ocd timerfont <8-40>     Set timer font size for the active bar.
+/ocd timerfont <8-100>    Set timer font size for the active bar.
 /ocd timerfont reset      Restore the default timer font size.
 /ocd remove <n>          Remove entry n.
 /ocd move <a> <b>        Move entry a to position b.
@@ -183,6 +183,10 @@ manually:
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.4.3
+
+- Increased the maximum per-bar timer font size from 40 to 100.
 
 ### 0.4.2
 
