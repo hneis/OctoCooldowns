@@ -110,6 +110,28 @@ also supports the standard localized Vanilla 1.12 combat log and does not
 require either extension. On older Nampower versions the addon enables the
 required event CVars and prints a one-time request to reload the UI.
 
+## Toggle Auras
+
+OctoWoW's `Blade Flurry` can be placed on any bar, including the `Procs` bar.
+Its English and Russian (`Шквал клинков`) names are recognized automatically.
+
+- While the bar is locked, the icon is hidden when Blade Flurry is off.
+- When Blade Flurry is on, the icon appears at full brightness with a blue
+  border.
+- While editing, the inactive icon remains visible but dimmed.
+- The four-second re-enable cooldown is intentionally not displayed because
+  the active toggle can still be disabled immediately.
+- The actual player buff is the source of truth, so login, reload, and missed
+  events are corrected by aura scanning.
+
+For another locale or a renamed custom spell, configure the tracked entry
+manually:
+
+```text
+/ocd aura <entry> bladeflurry
+/ocd aura <entry> off
+```
+
 ## Commands
 
 ```text
@@ -123,6 +145,7 @@ required event CVars and prints a one-time request to reload the UI.
 /ocd add <name>          Add a spell by exact spellbook name.
 /ocd item <itemID>       Add an item by numeric item ID.
 /ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
+/ocd aura <n> <mode>     Set bladeflurry or off for spell entry n.
 /ocd procstyle <mode>     Set red or hide for the active bar.
 /ocd procdebug <mode>     Enable, disable, or show proc diagnostics.
 /ocd remove <n>          Remove entry n.
@@ -153,6 +176,14 @@ required event CVars and prints a one-time request to reload the UI.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.4.0
+
+- Added persistent toggle-aura tracking for OctoWoW Blade Flurry.
+- Hide Blade Flurry while off and show it with a blue border while active.
+- Detect active state from the actual player buff instead of spell cooldown.
+- Added English/Russian automatic recognition and `/ocd aura` overrides.
+- Added immediate aura-event updates with periodic scanning as a fallback.
 
 ### 0.3.1
 

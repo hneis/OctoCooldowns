@@ -1,4 +1,4 @@
--- OctoCooldowns 0.3.1
+-- OctoCooldowns 0.4.0
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -10,6 +10,7 @@ local MAX_UPDATE_INTERVAL = 1.00
 local GCD_THRESHOLD = 1.80
 local REACTIVE_DURATION = 4.00
 local REACTIVE_DUPLICATE_WINDOW = 0.50
+local AURA_SCAN_INTERVAL = 0.50
 local updateElapsed = 0
 local barFrames = {}
 local itemCountCache = {}
@@ -20,6 +21,10 @@ local enhancedReactiveEventsRegistered = false
 local reactiveDebug = false
 local reactiveDebugSequence = 0
 local entryDrag = nil
+local auraScanTooltip = nil
+local playerAuraSnapshot = { byName = {}, bySpellID = {}, byTexture = {}, count = 0 }
+local auraScanDirty = true
+local lastAuraScan = 0
 local enhancedReactiveSeen = {
   autoSelf = false,
   autoOther = false,
@@ -44,6 +49,13 @@ local REACTIVE_NAMES = {
   ["внезапное нападение"] = "surprise"
 }
 
+local AURA_NAMES = {
+  ["Blade Flurry"] = "bladeflurry",
+  ["blade flurry"] = "bladeflurry",
+  ["Шквал клинков"] = "bladeflurry",
+  ["шквал клинков"] = "bladeflurry"
+}
+
 local function Chat(msg)
   if DEFAULT_CHAT_FRAME then
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ccffOctoCooldowns:|r " .. msg)
@@ -64,6 +76,15 @@ end
 
 local function IsReactiveEntry(entry)
   return entry and entry.kind == "spell" and (entry.reactive == "riposte" or entry.reactive == "surprise")
+end
+
+local function AuraKindByName(name)
+  if not name then return nil end
+  return AURA_NAMES[name] or AURA_NAMES[string.lower(name)]
+end
+
+local function IsAuraEntry(entry)
+  return entry and entry.kind == "spell" and entry.aura == "bladeflurry"
 end
 
 local PATTERN_MAGIC = {
@@ -209,13 +230,16 @@ local function EnsureBar(bar, index)
     if entry.kind == "spell" and entry.reactive == nil then
       entry.reactive = ReactiveKindByName(entry.name)
     end
+    if entry.kind == "spell" and entry.aura == nil and entry.reactive == nil then
+      entry.aura = AuraKindByName(entry.name)
+    end
     i = i + 1
   end
 end
 
 local function EnsureDB()
   if not OctoCooldownsDB then
-    OctoCooldownsDB = { version = 5, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 6, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     return
   end
 
@@ -231,11 +255,11 @@ local function EnsureDB()
     if old.x ~= nil then bar.x = old.x end
     if old.y ~= nil then bar.y = old.y end
     if old.entries then bar.entries = old.entries end
-    OctoCooldownsDB = { version = 5, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
+    OctoCooldownsDB = { version = 6, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
     Chat("migrated 0.1 settings to multi-bar format")
   end
 
-  OctoCooldownsDB.version = 5
+  OctoCooldownsDB.version = 6
   if not OctoCooldownsDB.updateInterval then OctoCooldownsDB.updateInterval = DEFAULT_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval < MIN_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MIN_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval > MAX_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MAX_UPDATE_INTERVAL end
@@ -311,6 +335,92 @@ local function ResolveSpell(entry)
   entry._rank = rank
   entry._texture = texture
   return slot
+end
+
+local function HasAuraEntries()
+  if not OctoCooldownsDB or not OctoCooldownsDB.bars then return false end
+  local bi = 1
+  while bi <= table.getn(OctoCooldownsDB.bars) do
+    local bar = OctoCooldownsDB.bars[bi]
+    local ei = 1
+    while ei <= table.getn(bar.entries) do
+      if IsAuraEntry(bar.entries[ei]) then return true end
+      ei = ei + 1
+    end
+    bi = bi + 1
+  end
+  return false
+end
+
+local function GetAuraScanTooltip()
+  if auraScanTooltip then return auraScanTooltip end
+  auraScanTooltip = CreateFrame("GameTooltip", "OctoCooldownsAuraScanTooltip", UIParent, "GameTooltipTemplate")
+  auraScanTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+  return auraScanTooltip
+end
+
+local function RefreshPlayerAuraSnapshot(force)
+  local now = GetTime()
+  if not force and not auraScanDirty and now - lastAuraScan < AURA_SCAN_INTERVAL then return end
+  auraScanDirty = false
+  lastAuraScan = now
+
+  local snapshot = { byName = {}, bySpellID = {}, byTexture = {}, count = 0 }
+  playerAuraSnapshot = snapshot
+  if not HasAuraEntries() or type(GetPlayerBuff) ~= "function" then return end
+
+  local tooltip = GetAuraScanTooltip()
+  local visibleSlot = 0
+  while visibleSlot < 32 do
+    local buffIndex = GetPlayerBuff(visibleSlot, "HELPFUL")
+    if buffIndex and buffIndex >= 0 then
+      local texture = nil
+      if type(GetPlayerBuffTexture) == "function" then texture = GetPlayerBuffTexture(buffIndex) end
+      tooltip:ClearLines()
+      tooltip:SetPlayerBuff(buffIndex)
+      local line = nil
+      if type(getglobal) == "function" then
+        line = getglobal("OctoCooldownsAuraScanTooltipTextLeft1")
+      elseif _G then
+        line = _G["OctoCooldownsAuraScanTooltipTextLeft1"]
+      end
+      local auraName = nil
+      if line and line.GetText then auraName = line:GetText() end
+      if auraName and auraName ~= "" then snapshot.byName[auraName] = true end
+      if texture then snapshot.byTexture[texture] = true end
+      snapshot.count = snapshot.count + 1
+    else
+      break
+    end
+    visibleSlot = visibleSlot + 1
+  end
+
+  if type(UnitBuff) == "function" then
+    local unitSlot = 1
+    while unitSlot <= 32 do
+      local texture, stacks, spellID = UnitBuff("player", unitSlot)
+      if not texture then break end
+      snapshot.byTexture[texture] = true
+      spellID = tonumber(spellID)
+      if spellID then snapshot.bySpellID[spellID] = true end
+      unitSlot = unitSlot + 1
+    end
+  end
+  tooltip:Hide()
+end
+
+local function AuraEntryIsActive(entry)
+  if not IsAuraEntry(entry) then return false end
+  if entry.name and playerAuraSnapshot.byName[entry.name] then return true end
+
+  if type(GetSpellIdForName) == "function" and entry.name then
+    local spellID = GetSpellIdForName(entry.name)
+    if spellID and playerAuraSnapshot.bySpellID[tonumber(spellID) or spellID] then return true end
+  end
+
+  if entry.aura == "bladeflurry" and playerAuraSnapshot.bySpellID[13877] then return true end
+  if entry._texture and playerAuraSnapshot.byTexture[entry._texture] then return true end
+  return false
 end
 
 local function LegacyTrue(value)
@@ -543,6 +653,10 @@ local function ReactiveEntryIsActive(entry)
 end
 
 local function EntryShouldShow(entry, bar)
+  if IsAuraEntry(entry) then
+    if not bar.locked then return true end
+    return AuraEntryIsActive(entry)
+  end
   if not IsReactiveEntry(entry) then return true end
   if not bar.locked then return true end
   if not ReactiveEntryIsActive(entry) then return false end
@@ -893,7 +1007,9 @@ local function CreateIcon(barIndex, index, parent)
         GameTooltip:SetText(name or ("Item " .. entry.itemID))
       end
     end
-    if entry.reactive == "riposte" then
+    if entry.aura == "bladeflurry" then
+      GameTooltip:AddLine("Toggle aura: shown only while active", 0.15, 0.75, 1.0)
+    elseif entry.reactive == "riposte" then
       GameTooltip:AddLine("Reactive: show for 4 sec after you parry", 1.0, 0.82, 0.1)
     elseif entry.reactive == "surprise" then
       GameTooltip:AddLine("Reactive: show for 4 sec after your target dodges", 1.0, 0.82, 0.1)
@@ -1233,13 +1349,20 @@ function OCD:AddSpellByName(name, barIndex)
   end
   local e = { kind = "spell", name = realName }
   e.reactive = ReactiveKindByName(realName)
+  e.aura = AuraKindByName(realName)
   e._slot = slot
   e._rank = rank
   e._texture = texture
   table.insert(bar.entries, e)
   local reactiveLabel = ""
   if e.reactive then reactiveLabel = " (reactive: " .. e.reactive .. ")" end
-  Chat("added spell to [" .. bar.name .. "]: " .. realName .. reactiveLabel)
+  local auraLabel = ""
+  if e.aura then auraLabel = " (aura: " .. e.aura .. ")" end
+  Chat("added spell to [" .. bar.name .. "]: " .. realName .. reactiveLabel .. auraLabel)
+  if e.aura then
+    auraScanDirty = true
+    RefreshPlayerAuraSnapshot(true)
+  end
   self:RebuildBar(barIndex)
   return true
 end
@@ -1262,9 +1385,39 @@ function OCD:SetEntryReactive(barIndex, entryIndex, mode)
   end
 
   entry.reactive = mode
+  if mode then entry.aura = false end
   self:RebuildBar(barIndex)
   if mode then
     Chat("entry " .. entryIndex .. " is reactive: " .. mode)
+  else
+    Chat("entry " .. entryIndex .. " uses normal cooldown tracking")
+  end
+  return true
+end
+
+function OCD:SetEntryAura(barIndex, entryIndex, mode)
+  local bar = GetBar(barIndex)
+  local entry = bar and bar.entries[entryIndex]
+  if not entry or entry.kind ~= "spell" then
+    Chat("aura entry must be a tracked spell")
+    return false
+  end
+
+  mode = string.lower(Trim(mode or ""))
+  if mode == "blade-flurry" or mode == "blade" then mode = "bladeflurry" end
+  if mode == "off" or mode == "none" or mode == "normal" then mode = false end
+  if mode ~= false and mode ~= "bladeflurry" then
+    Chat("usage: /ocd aura <entry> bladeflurry|off")
+    return false
+  end
+
+  entry.aura = mode
+  if mode then entry.reactive = false end
+  auraScanDirty = true
+  RefreshPlayerAuraSnapshot(true)
+  self:RebuildBar(barIndex)
+  if mode then
+    Chat("entry " .. entryIndex .. " tracks aura: " .. mode)
   else
     Chat("entry " .. entryIndex .. " uses normal cooldown tracking")
   end
@@ -1303,6 +1456,7 @@ function OCD:SetProcDebug(mode)
   end
 
   if mode == "status" or mode == "" then
+    RefreshPlayerAuraSnapshot(true)
     local version = "unavailable"
     if type(GetNampowerVersion) == "function" then
       local ok, major, minor, patch = pcall(GetNampowerVersion)
@@ -1319,6 +1473,10 @@ function OCD:SetProcDebug(mode)
       .. " autoOther=" .. tostring(enhancedReactiveSeen.autoOther)
       .. " spellSelf=" .. tostring(enhancedReactiveSeen.spellMissSelf)
       .. " spellOther=" .. tostring(enhancedReactiveSeen.spellMissOther))
+    Chat("player auras=" .. tostring(playerAuraSnapshot.count)
+      .. " Blade Flurry=" .. tostring(playerAuraSnapshot.byName["Blade Flurry"]
+        or playerAuraSnapshot.byName["Шквал клинков"]
+        or playerAuraSnapshot.bySpellID[13877]))
     local kinds = { "riposte", "surprise" }
     local i = 1
     while i <= table.getn(kinds) do
@@ -1431,7 +1589,26 @@ function OCD:UpdateBarCooldowns(barIndex)
     local e = bar.entries[i]
     local b = main.icons[i]
     if b and b:IsShown() then
-      if IsReactiveEntry(e) then
+      if IsAuraEntry(e) then
+        local auraActive = AuraEntryIsActive(e)
+        if b._ocdVisualMode ~= "aura" or b._ocdAuraActive ~= auraActive then
+          if auraActive then
+            b.border:SetTexture(0.15, 0.75, 1.0, 1)
+            b.icon:SetVertexColor(1, 1, 1)
+          else
+            b.border:SetTexture(0, 0, 0, 1)
+            b.icon:SetVertexColor(0.35, 0.35, 0.35)
+          end
+          b._ocdVisualMode = "aura"
+          b._ocdAuraActive = auraActive
+          b._ocdReactiveVisual = nil
+          b._ocdCooldownActive = nil
+        end
+        if b._ocdTimerText ~= "" then
+          b.timer:SetText("")
+          b._ocdTimerText = ""
+        end
+      elseif IsReactiveEntry(e) then
         local state = reactiveState[e.reactive]
         local remain = 0
         if state then remain = (state.expires or 0) - now end
@@ -1457,6 +1634,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           end
           b._ocdVisualMode = "reactive"
           b._ocdReactiveVisual = visualState
+          b._ocdAuraActive = nil
         end
         if b._ocdTimerText ~= timerText then
           b.timer:SetText(timerText)
@@ -1468,6 +1646,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           b._ocdCooldownActive = nil
           b._ocdTimerText = nil
           b._ocdReactiveVisual = nil
+          b._ocdAuraActive = nil
           b.border:SetTexture(0, 0, 0, 1)
         end
 
@@ -1515,6 +1694,7 @@ end
 
 function OCD:UpdateCooldowns()
   if not OctoCooldownsDB then return end
+  RefreshPlayerAuraSnapshot()
   self:ProbeReactiveStates()
   local layoutIndex = 1
   while layoutIndex <= table.getn(OctoCooldownsDB.bars) do
@@ -1594,7 +1774,9 @@ function OCD:List(barIndex)
     if e.kind == "spell" then
       local reactiveLabel = ""
       if e.reactive then reactiveLabel = " [proc: " .. e.reactive .. "]" end
-      Chat(i .. ". spell: " .. (e.name or "?") .. reactiveLabel)
+      local auraLabel = ""
+      if e.aura then auraLabel = " [aura: " .. e.aura .. "]" end
+      Chat(i .. ". spell: " .. (e.name or "?") .. reactiveLabel .. auraLabel)
     else
       Chat(i .. ". item: " .. (e.name or "?") .. " [" .. tostring(e.itemID) .. "]")
     end
@@ -1754,6 +1936,8 @@ function OCD:RegisterEnhancedReactiveEvents()
     SafeRegisterEvent("SPELL_GO_SELF")
     SafeRegisterEvent("SPELL_START_SELF")
   end
+  SafeRegisterEvent("BUFF_ADDED_SELF")
+  SafeRegisterEvent("BUFF_REMOVED_SELF")
 
   -- SuperWoW exposes this event; pcall keeps stock 1.12 clients safe.
   SafeRegisterEvent("UNIT_CASTEVENT")
@@ -1830,6 +2014,7 @@ local function Help()
   Chat("/ocd unlock | lock | unlockall | lockall")
   Chat("/ocd add <spell name> | item <itemID>")
   Chat("/ocd proc <entry> riposte|surprise|off")
+  Chat("/ocd aura <entry> bladeflurry|off")
   Chat("/ocd procstyle red|hide")
   Chat("/ocd procdebug on|off|status")
   Chat("/ocd remove <number> | move <from> <to>")
@@ -1902,6 +2087,13 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
     else
       Chat("usage: /ocd proc <entry> riposte|surprise|off")
     end
+  elseif cmd == "aura" then
+    local _, _, entryIndex, mode = string.find(rest, "^(%d+)%s+(%S+)$")
+    if entryIndex and mode then
+      OCD:SetEntryAura(active, tonumber(entryIndex), mode)
+    else
+      Chat("usage: /ocd aura <entry> bladeflurry|off")
+    end
   elseif cmd == "procstyle" or cmd == "proc-style" then
     OCD:SetProcCooldownMode(active, rest)
   elseif cmd == "procdebug" or cmd == "proc-debug" then
@@ -1957,7 +2149,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
   elseif cmd == "reset" then
     OCD:ResetBar(active)
   elseif cmd == "resetall" then
-    OctoCooldownsDB = { version = 5, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 6, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     Chat("all settings reset")
@@ -1986,6 +2178,7 @@ OCD:RegisterEvent("PLAYER_TARGET_CHANGED")
 OCD:RegisterEvent("UNIT_HEALTH")
 OCD:RegisterEvent("ACTIONBAR_UPDATE_USABLE")
 OCD:RegisterEvent("SPELL_UPDATE_USABLE")
+OCD:RegisterEvent("PLAYER_AURAS_CHANGED")
 
 OCD:SetScript("OnEvent", function()
   if event == "VARIABLES_LOADED" then
@@ -1993,6 +2186,7 @@ OCD:SetScript("OnEvent", function()
     EnsureDB()
     OCD:RegisterEnhancedReactiveEvents()
     OCD:ClearReactiveStates(false)
+    RefreshPlayerAuraSnapshot(true)
     OCD:RebuildAll(true)
     local i = 1
     while i <= table.getn(OctoCooldownsDB.bars) do
@@ -2004,15 +2198,26 @@ OCD:SetScript("OnEvent", function()
     OCD:RefreshItemCounts()
     Chat("loaded. /ocd help")
   elseif event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB" then
-    if OctoCooldownsDB then OCD:RebuildAll(false) end
+    if OctoCooldownsDB then
+      auraScanDirty = true
+      RefreshPlayerAuraSnapshot(true)
+      OCD:RebuildAll(false)
+    end
   elseif event == "PLAYER_ENTERING_WORLD" then
     if OctoCooldownsDB then
       OCD:ClearReactiveStates(false)
+      auraScanDirty = true
+      RefreshPlayerAuraSnapshot(true)
       OCD:RebuildAll(true)
       OCD:RefreshItemCounts()
     end
   elseif event == "BAG_UPDATE" then
     if OctoCooldownsDB then bagCountsDirty = true end
+  elseif event == "PLAYER_AURAS_CHANGED" or event == "BUFF_ADDED_SELF" or event == "BUFF_REMOVED_SELF" then
+    if OctoCooldownsDB then
+      auraScanDirty = true
+      OCD:UpdateCooldowns()
+    end
   elseif event == "UNIT_COMBAT" then
     if arg1 == "player" and arg2 == "PARRY" then OCD:ActivateReactive("riposte", nil, nil, "unit") end
   elseif event == "CHAT_MSG_COMBAT_SELF_MISSES"
