@@ -148,6 +148,8 @@ manually:
 /ocd aura <n> <mode>     Set bladeflurry or off for spell entry n.
 /ocd procstyle <mode>     Set red or hide for the active bar.
 /ocd procdebug <mode>     Enable, disable, or show proc diagnostics.
+/ocd timerfont <8-40>     Set timer font size for the active bar.
+/ocd timerfont reset      Restore the default timer font size.
 /ocd remove <n>          Remove entry n.
 /ocd move <a> <b>        Move entry a to position b.
 /ocd cols <1-12>         Set columns for the active bar.
@@ -172,10 +174,18 @@ manually:
 - Item counts update on bag changes rather than every frame.
 - Cooldowns are polled every 0.10 seconds by default. Use `/ocd update 0.20`
   for lower overhead.
+- Timer font size is configured per bar. For example, select `Procs` and run
+  `/ocd timerfont 20`; use `/ocd timerfont reset` to restore the inherited
+  `NumberFontNormal` size.
 - Settings are stored per character in `OctoCooldownsDB`.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.4.1
+
+- Added per-bar numeric timer font sizes through `/ocd timerfont`.
+- Added reset support that restores the original `NumberFontNormal` font.
 
 ### 0.4.0
 

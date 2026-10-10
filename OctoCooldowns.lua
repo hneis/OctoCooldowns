@@ -1,4 +1,4 @@
--- OctoCooldowns 0.4.0
+-- OctoCooldowns 0.4.1
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -205,6 +205,7 @@ local function NewBar(name, y)
   t.cols = 4
   t.size = 40
   t.gap = 4
+  t.timerFontSize = false
   t.procCooldownMode = "red"
   t.point = "CENTER"
   t.x = 0
@@ -219,6 +220,14 @@ local function EnsureBar(bar, index)
   if not bar.cols then bar.cols = 4 end
   if not bar.size then bar.size = 40 end
   if not bar.gap then bar.gap = 4 end
+  if bar.timerFontSize ~= false then
+    local timerFontSize = tonumber(bar.timerFontSize)
+    if timerFontSize and timerFontSize >= 8 and timerFontSize <= 40 then
+      bar.timerFontSize = math.floor(timerFontSize + 0.5)
+    else
+      bar.timerFontSize = false
+    end
+  end
   if bar.procCooldownMode ~= "hide" and bar.procCooldownMode ~= "red" then bar.procCooldownMode = "red" end
   if not bar.point then bar.point = "CENTER" end
   if bar.x == nil then bar.x = 0 end
@@ -239,7 +248,7 @@ end
 
 local function EnsureDB()
   if not OctoCooldownsDB then
-    OctoCooldownsDB = { version = 6, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 7, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     return
   end
 
@@ -255,11 +264,11 @@ local function EnsureDB()
     if old.x ~= nil then bar.x = old.x end
     if old.y ~= nil then bar.y = old.y end
     if old.entries then bar.entries = old.entries end
-    OctoCooldownsDB = { version = 6, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
+    OctoCooldownsDB = { version = 7, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
     Chat("migrated 0.1 settings to multi-bar format")
   end
 
-  OctoCooldownsDB.version = 6
+  OctoCooldownsDB.version = 7
   if not OctoCooldownsDB.updateInterval then OctoCooldownsDB.updateInterval = DEFAULT_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval < MIN_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MIN_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval > MAX_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MAX_UPDATE_INTERVAL end
@@ -851,6 +860,19 @@ local function FormatTime(remain)
   return ""
 end
 
+local function ApplyTimerFont(button, bar)
+  if not button or not button.timer or not button.timer.SetFont then return end
+  local fontPath = button._ocdTimerDefaultFont or STANDARD_TEXT_FONT
+  local fontSize = tonumber(bar.timerFontSize) or button._ocdTimerDefaultSize
+  local fontFlags = button._ocdTimerDefaultFlags
+  if not fontPath or not fontSize then return end
+  if fontFlags and fontFlags ~= "" then
+    button.timer:SetFont(fontPath, fontSize, fontFlags)
+  else
+    button.timer:SetFont(fontPath, fontSize)
+  end
+end
+
 local function EntriesMatch(a, b)
   if not a or not b or a.kind ~= b.kind then return false end
   if a.kind == "spell" then return a.name == b.name end
@@ -981,6 +1003,9 @@ local function CreateIcon(barIndex, index, parent)
   timer:SetPoint("CENTER", b, "CENTER", 0, 0)
   timer:SetText("")
   b.timer = timer
+  if timer.GetFont then
+    b._ocdTimerDefaultFont, b._ocdTimerDefaultSize, b._ocdTimerDefaultFlags = timer:GetFont()
+  end
 
   local count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
   count:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -2, 2)
@@ -1266,6 +1291,7 @@ function OCD:RebuildBar(barIndex)
         b._ocdVisualMode = nil
         b.border:SetTexture(0, 0, 0, 1)
       end
+      ApplyTimerFont(b, bar)
 
       if shouldShow then
         displayIndex = displayIndex + 1
@@ -1439,6 +1465,32 @@ function OCD:SetProcCooldownMode(barIndex, mode)
   bar.procCooldownMode = mode
   self:RebuildBar(barIndex)
   Chat("proc cooldown style for [" .. bar.name .. "]: " .. mode)
+  return true
+end
+
+function OCD:SetTimerFontSize(barIndex, value)
+  local bar = GetBar(barIndex)
+  if not bar then return false end
+  value = string.lower(Trim(value or ""))
+  if value == "" then
+    Chat("timer font size for [" .. bar.name .. "]: " .. (bar.timerFontSize or "default"))
+    return true
+  end
+  if value == "reset" or value == "default" or value == "auto" then
+    bar.timerFontSize = false
+    self:RebuildBar(barIndex)
+    Chat("timer font size for [" .. bar.name .. "]: default")
+    return true
+  end
+
+  local fontSize = tonumber(value)
+  if not fontSize or fontSize < 8 or fontSize > 40 then
+    Chat("timer font size: 8-40 or reset")
+    return false
+  end
+  bar.timerFontSize = math.floor(fontSize + 0.5)
+  self:RebuildBar(barIndex)
+  Chat("timer font size for [" .. bar.name .. "]: " .. bar.timerFontSize)
   return true
 end
 
@@ -2016,6 +2068,7 @@ local function Help()
   Chat("/ocd proc <entry> riposte|surprise|off")
   Chat("/ocd aura <entry> bladeflurry|off")
   Chat("/ocd procstyle red|hide")
+  Chat("/ocd timerfont <8-40>|reset")
   Chat("/ocd procdebug on|off|status")
   Chat("/ocd remove <number> | move <from> <to>")
   Chat("/ocd cols <1-12> | size <20-80> | gap <0-20>")
@@ -2096,6 +2149,8 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
     end
   elseif cmd == "procstyle" or cmd == "proc-style" then
     OCD:SetProcCooldownMode(active, rest)
+  elseif cmd == "timerfont" or cmd == "fontsize" or cmd == "font" then
+    OCD:SetTimerFontSize(active, rest)
   elseif cmd == "procdebug" or cmd == "proc-debug" then
     OCD:SetProcDebug(rest)
   elseif cmd == "remove" or cmd == "rm" then
@@ -2149,7 +2204,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
   elseif cmd == "reset" then
     OCD:ResetBar(active)
   elseif cmd == "resetall" then
-    OctoCooldownsDB = { version = 6, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 7, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     Chat("all settings reset")
