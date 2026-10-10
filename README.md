@@ -175,12 +175,20 @@ manually:
 - Cooldowns are polled every 0.10 seconds by default. Use `/ocd update 0.20`
   for lower overhead.
 - Timer font size is configured per bar. For example, select `Procs` and run
-  `/ocd timerfont 20`; use `/ocd timerfont reset` to restore the inherited
-  `NumberFontNormal` size.
+  `/ocd timerfont 20`; use `/ocd timerfont reset` to restore the standard
+  `ARIALN` size of 14.
+- Unlocked bars show `12.3` when no real timer is active, making font-size
+  changes immediately visible. The preview disappears when the bar is locked.
 - Settings are stored per character in `OctoCooldownsDB`.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.4.2
+
+- Made timer fonts independent from inherited `NumberFontNormal` rendering.
+- Added a `12.3` timer preview while bars are unlocked.
+- Made reset reliably restore `ARIALN`, size 14, with an outline.
 
 ### 0.4.1
 

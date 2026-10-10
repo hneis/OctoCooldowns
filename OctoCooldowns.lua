@@ -1,4 +1,4 @@
--- OctoCooldowns 0.4.1
+-- OctoCooldowns 0.4.2
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -11,6 +11,10 @@ local GCD_THRESHOLD = 1.80
 local REACTIVE_DURATION = 4.00
 local REACTIVE_DUPLICATE_WINDOW = 0.50
 local AURA_SCAN_INTERVAL = 0.50
+local TIMER_FONT_PATH = "Fonts\\ARIALN.TTF"
+local TIMER_FONT_SIZE = 14
+local TIMER_FONT_FLAGS = "OUTLINE"
+local TIMER_PREVIEW_TEXT = "12.3"
 local updateElapsed = 0
 local barFrames = {}
 local itemCountCache = {}
@@ -862,15 +866,13 @@ end
 
 local function ApplyTimerFont(button, bar)
   if not button or not button.timer or not button.timer.SetFont then return end
-  local fontPath = button._ocdTimerDefaultFont or STANDARD_TEXT_FONT
-  local fontSize = tonumber(bar.timerFontSize) or button._ocdTimerDefaultSize
-  local fontFlags = button._ocdTimerDefaultFlags
-  if not fontPath or not fontSize then return end
-  if fontFlags and fontFlags ~= "" then
-    button.timer:SetFont(fontPath, fontSize, fontFlags)
-  else
-    button.timer:SetFont(fontPath, fontSize)
-  end
+  local fontSize = tonumber(bar.timerFontSize) or TIMER_FONT_SIZE
+  button.timer:SetFont(TIMER_FONT_PATH, fontSize, TIMER_FONT_FLAGS)
+end
+
+local function TimerTextWithPreview(bar, timerText)
+  if timerText == "" and not bar.locked then return TIMER_PREVIEW_TEXT end
+  return timerText
 end
 
 local function EntriesMatch(a, b)
@@ -999,13 +1001,12 @@ local function CreateIcon(barIndex, index, parent)
   icon:SetAllPoints(b)
   b.icon = icon
 
-  local timer = b:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+  local timer = b:CreateFontString(nil, "OVERLAY")
+  timer:SetFont(TIMER_FONT_PATH, TIMER_FONT_SIZE, TIMER_FONT_FLAGS)
+  timer:SetTextColor(1, 1, 1)
   timer:SetPoint("CENTER", b, "CENTER", 0, 0)
   timer:SetText("")
   b.timer = timer
-  if timer.GetFont then
-    b._ocdTimerDefaultFont, b._ocdTimerDefaultSize, b._ocdTimerDefaultFlags = timer:GetFont()
-  end
 
   local count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
   count:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -2, 2)
@@ -1656,9 +1657,10 @@ function OCD:UpdateBarCooldowns(barIndex)
           b._ocdReactiveVisual = nil
           b._ocdCooldownActive = nil
         end
-        if b._ocdTimerText ~= "" then
-          b.timer:SetText("")
-          b._ocdTimerText = ""
+        local timerText = TimerTextWithPreview(bar, "")
+        if b._ocdTimerText ~= timerText then
+          b.timer:SetText(timerText)
+          b._ocdTimerText = timerText
         end
       elseif IsReactiveEntry(e) then
         local state = reactiveState[e.reactive]
@@ -1672,6 +1674,7 @@ function OCD:UpdateBarCooldowns(barIndex)
         end
         local timerText = ""
         if reactiveActive then timerText = FormatTime(remain) end
+        timerText = TimerTextWithPreview(bar, timerText)
 
         if b._ocdVisualMode ~= "reactive" or b._ocdReactiveVisual ~= visualState then
           if visualState == "ready" then
@@ -1725,6 +1728,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           cooldownActive = true
           timerText = FormatTime(remain)
         end
+        timerText = TimerTextWithPreview(bar, timerText)
 
         if b._ocdCooldownActive ~= cooldownActive then
           if cooldownActive then
