@@ -1,4 +1,4 @@
--- OctoCooldowns 0.6.0
+-- OctoCooldowns 0.7.0
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -16,6 +16,7 @@ local TIMER_FONT_SIZE = 14
 local TIMER_FONT_FLAGS = "OUTLINE"
 local TIMER_FONT_RASTER_SIZE = 32
 local TIMER_PREVIEW_TEXT = "12.3"
+local MODE_MARKER_FONT_SIZE = 8
 local updateElapsed = 0
 local barFrames = {}
 local itemCountCache = {}
@@ -151,6 +152,25 @@ end
 
 local function AuraEntryIsCombined(entry)
   return IsAuraEntry(entry) and entry.auraMode == "combined"
+end
+
+local function EntrySupportsAuraToggle(entry)
+  if not entry or entry.kind ~= "spell" then return false end
+  if IsAuraEntry(entry) then return true end
+  if entry.lastAura and AURA_KINDS[entry.lastAura] then return true end
+  return AuraKindByName(entry.name) ~= nil
+end
+
+local function EntryModeLabel(entry)
+  if AuraEntryIsCombined(entry) then return "A/CD", "aura" end
+  if IsAuraEntry(entry) then return "A", "aura" end
+  if IsReactiveEntry(entry) then return "P", "proc" end
+  return "CD", "cooldown"
+end
+
+local function AuraModeToken(kind, mode)
+  if kind == "ghostlystrike" and mode == "combined" then return "ghostlystrike-combined" end
+  return kind
 end
 
 local PATTERN_MAGIC = {
@@ -313,13 +333,22 @@ local function EnsureBar(bar, index)
       entry.auraMode = DefaultAuraMode(entry.aura)
     end
     if entry.hideReadyOutOfCombat ~= true then entry.hideReadyOutOfCombat = false end
+    if entry.lastAura and not AURA_KINDS[entry.lastAura] then
+      entry.lastAura = nil
+      entry.lastAuraMode = nil
+      entry.lastHideReadyOutOfCombat = nil
+    end
+    if entry.lastAura and entry.lastAuraMode ~= "only" and entry.lastAuraMode ~= "combined" then
+      entry.lastAuraMode = DefaultAuraMode(entry.lastAura)
+    end
+    if entry.lastHideReadyOutOfCombat ~= true then entry.lastHideReadyOutOfCombat = false end
     i = i + 1
   end
 end
 
 local function EnsureDB()
   if not OctoCooldownsDB then
-    OctoCooldownsDB = { version = 10, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 11, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     return
   end
 
@@ -335,11 +364,11 @@ local function EnsureDB()
     if old.x ~= nil then bar.x = old.x end
     if old.y ~= nil then bar.y = old.y end
     if old.entries then bar.entries = old.entries end
-    OctoCooldownsDB = { version = 10, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
+    OctoCooldownsDB = { version = 11, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
     Chat("migrated 0.1 settings to multi-bar format")
   end
 
-  OctoCooldownsDB.version = 10
+  OctoCooldownsDB.version = 11
   if not OctoCooldownsDB.updateInterval then OctoCooldownsDB.updateInterval = DEFAULT_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval < MIN_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MIN_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval > MAX_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MAX_UPDATE_INTERVAL end
@@ -1007,6 +1036,37 @@ local function TimerTextWithPreview(bar, timerText)
   return timerText
 end
 
+local function UpdateModeMarker(button, entry, bar)
+  if not button or not button.modeMarker then return end
+  if bar.locked then
+    button.modeMarker:Hide()
+    return
+  end
+
+  local label, mode = EntryModeLabel(entry)
+  local iconSize = tonumber(bar.size) or 40
+  local timerSize = tonumber(bar.timerFontSize) or TIMER_FONT_SIZE
+  local safeTimerHeight = iconSize - (2 * (MODE_MARKER_FONT_SIZE + 2))
+  if iconSize < 32 or timerSize > safeTimerHeight then
+    button.modeMarker:Hide()
+    return
+  end
+  if button.modeMarker.SetFont then
+    button.modeMarker:SetFont(TIMER_FONT_PATH, MODE_MARKER_FONT_SIZE, TIMER_FONT_FLAGS)
+  end
+  if button.modeMarker.SetWidth then button.modeMarker:SetWidth(math.max(1, iconSize - 2)) end
+  if button.modeMarker.SetHeight then button.modeMarker:SetHeight(MODE_MARKER_FONT_SIZE + 2) end
+  button.modeMarker:SetText(label)
+  if mode == "aura" then
+    button.modeMarker:SetTextColor(0.15, 0.85, 1.0)
+  elseif mode == "proc" then
+    button.modeMarker:SetTextColor(1.0, 0.82, 0.1)
+  else
+    button.modeMarker:SetTextColor(0.85, 0.85, 0.85)
+  end
+  button.modeMarker:Show()
+end
+
 local function EntriesMatch(a, b)
   if not a or not b or a.kind ~= b.kind then return false end
   if a.kind == "spell" then return a.name == b.name end
@@ -1033,6 +1093,7 @@ function OCD:BeginEntryDrag(barIndex, entryIndex, frame)
     sourceEntry = bar.entries[entryIndex],
     sourceFrame = frame
   }
+  if frame then frame._ocdDragEndedAt = nil end
   if frame and frame.SetAlpha then frame:SetAlpha(0.45) end
   GameTooltip:Hide()
 end
@@ -1059,7 +1120,10 @@ function OCD:FinishEntryDrag()
   local drag = entryDrag
   if not drag then return end
   entryDrag = nil
-  if drag.sourceFrame and drag.sourceFrame.SetAlpha then drag.sourceFrame:SetAlpha(1) end
+  if drag.sourceFrame then
+    drag.sourceFrame._ocdDragEndedAt = GetTime()
+    if drag.sourceFrame.SetAlpha then drag.sourceFrame:SetAlpha(1) end
+  end
 
   local focus = nil
   if type(GetMouseFocus) == "function" then focus = GetMouseFocus() end
@@ -1146,6 +1210,14 @@ local function CreateIcon(barIndex, index, parent)
   count:SetText("")
   b.count = count
 
+  local modeMarker = b:CreateFontString(nil, "OVERLAY")
+  modeMarker:SetFont(TIMER_FONT_PATH, MODE_MARKER_FONT_SIZE, TIMER_FONT_FLAGS)
+  modeMarker:SetPoint("TOPLEFT", b, "TOPLEFT", 1, -1)
+  if modeMarker.SetJustifyH then modeMarker:SetJustifyH("LEFT") end
+  modeMarker:SetText("")
+  modeMarker:Hide()
+  b.modeMarker = modeMarker
+
   b:SetScript("OnEnter", function()
     if entryDrag then OCD:SetEntryDragTarget("entry", this._barIndex, this._entryIndex, this) end
     local bar = GetBar(this._barIndex)
@@ -1182,6 +1254,9 @@ local function CreateIcon(barIndex, index, parent)
     if not bar.locked then
       GameTooltip:AddLine("Shift + Right Click: remove", 0.8, 0.8, 0.8)
       GameTooltip:AddLine("Drag onto an icon to swap; drag to + to move", 0.8, 0.8, 0.8)
+      if EntrySupportsAuraToggle(entry) then
+        GameTooltip:AddLine("Alt + Left Click: toggle aura/cooldown", 0.8, 0.8, 0.8)
+      end
     end
     GameTooltip:Show()
   end)
@@ -1202,8 +1277,15 @@ local function CreateIcon(barIndex, index, parent)
   b:SetScript("OnMouseUp", function()
     local bar = GetBar(this._barIndex)
     if not bar or bar.locked then return end
+    if this._ocdDragEndedAt then
+      local elapsed = GetTime() - this._ocdDragEndedAt
+      this._ocdDragEndedAt = nil
+      if elapsed < 0.25 then return end
+    end
     OctoCooldownsDB.active = this._barIndex
-    if arg1 == "RightButton" and IsShiftKeyDown() then
+    if arg1 == "LeftButton" and type(IsAltKeyDown) == "function" and IsAltKeyDown() then
+      OCD:ToggleEntryAura(this._barIndex, this._entryIndex)
+    elseif arg1 == "RightButton" and IsShiftKeyDown() then
       local idx = this._entryIndex
       if idx and bar.entries[idx] then
         local label = bar.entries[idx].name or tostring(bar.entries[idx].itemID)
@@ -1432,6 +1514,7 @@ function OCD:RebuildBar(barIndex)
         b.border:SetTexture(0, 0, 0, 1)
       end
       ApplyTimerFont(b, bar)
+      UpdateModeMarker(b, entry, bar)
 
       if shouldShow then
         displayIndex = displayIndex + 1
@@ -1609,6 +1692,11 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
     return false
   end
 
+  if not auraKind and IsAuraEntry(entry) then
+    entry.lastAura = entry.aura
+    entry.lastAuraMode = entry.auraMode or DefaultAuraMode(entry.aura)
+    entry.lastHideReadyOutOfCombat = entry.hideReadyOutOfCombat == true
+  end
   entry.aura = auraKind
   entry.auraMode = auraMode
   if auraKind ~= "ghostlystrike" or auraMode ~= "combined" then
@@ -1616,7 +1704,12 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
   elseif entry.hideReadyOutOfCombat ~= true then
     entry.hideReadyOutOfCombat = false
   end
-  if auraKind then entry.reactive = false end
+  if auraKind then
+    entry.reactive = false
+    entry.lastAura = auraKind
+    entry.lastAuraMode = auraMode
+    entry.lastHideReadyOutOfCombat = entry.hideReadyOutOfCombat == true
+  end
   auraScanDirty = true
   RefreshPlayerAuraSnapshot(true)
   self:RebuildBar(barIndex)
@@ -1626,6 +1719,34 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
     Chat("entry " .. entryIndex .. " uses normal cooldown tracking")
   end
   return true
+end
+
+function OCD:ToggleEntryAura(barIndex, entryIndex)
+  local bar = GetBar(barIndex)
+  local entry = bar and bar.entries[entryIndex]
+  if not bar or bar.locked or not entry or entry.kind ~= "spell" then return false end
+
+  if IsAuraEntry(entry) then
+    return self:SetEntryAura(barIndex, entryIndex, "off")
+  end
+
+  local auraKind = entry.lastAura
+  if not auraKind or not AURA_KINDS[auraKind] then auraKind = AuraKindByName(entry.name) end
+  if not auraKind then
+    Chat("aura mode is not supported for " .. tostring(entry.name or "this entry"))
+    return false
+  end
+
+  local auraMode = entry.lastAuraMode
+  if auraMode ~= "only" and auraMode ~= "combined" then auraMode = DefaultAuraMode(auraKind) end
+  local restoreHide = entry.lastHideReadyOutOfCombat == true
+  local changed = self:SetEntryAura(barIndex, entryIndex, AuraModeToken(auraKind, auraMode))
+  if changed and auraKind == "ghostlystrike" and auraMode == "combined" then
+    entry.hideReadyOutOfCombat = restoreHide
+    entry.lastHideReadyOutOfCombat = restoreHide
+    self:RebuildBar(barIndex)
+  end
+  return changed
 end
 
 function OCD:SetEntryOOCReady(barIndex, entryIndex, mode)
@@ -1646,6 +1767,7 @@ function OCD:SetEntryOOCReady(barIndex, entryIndex, mode)
     return false
   end
 
+  entry.lastHideReadyOutOfCombat = entry.hideReadyOutOfCombat
   self:RebuildBar(barIndex)
   Chat("ready Ghostly Strike outside combat: " .. (entry.hideReadyOutOfCombat and "hidden" or "shown"))
   return true
@@ -2441,7 +2563,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
   elseif cmd == "reset" then
     OCD:ResetBar(active)
   elseif cmd == "resetall" then
-    OctoCooldownsDB = { version = 10, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 11, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     Chat("all settings reset")

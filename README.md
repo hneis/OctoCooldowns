@@ -194,6 +194,27 @@ Existing Evasion, Sprint, and Slice and Dice entries keep their previous normal
 cooldown behavior after updating. Use `/ocd aura <entry> off` to return any aura
 entry to normal cooldown tracking.
 
+### Quick Mode Editing
+
+While a bar is unlocked, `Alt + Left Click` on a supported spell toggles between
+its aura mode and normal cooldown mode. The previous aura mode is remembered,
+including Ghostly Strike combined/aura-only and its OOC ready setting.
+
+Unlocked icons show their mode in the top-left corner:
+
+```text
+A     aura-only
+A/CD  combined aura and cooldown
+P     reactive proc
+CD    normal cooldown or item
+```
+
+Mode markers and Alt-click configuration are disabled while the bar is locked.
+Alt-dragging an icon does not toggle its mode after the drop.
+Mode markers are hidden for icon sizes below 32 or when the configured timer
+font leaves too little space, avoiding overlaps with timer and item-count text.
+Alt-click and tooltip configuration remain available.
+
 ## Commands
 
 ```text
@@ -246,6 +267,13 @@ entry to normal cooldown tracking.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.7.0
+
+- Added `Alt + Left Click` to toggle supported spells between aura and cooldown modes.
+- Added unlocked mode markers: `A`, `A/CD`, `P`, and `CD`.
+- Preserve the previous aura mode and Ghostly Strike OOC setting across toggles.
+- Prevent Alt-drag operations from triggering an accidental mode change.
 
 ### 0.6.0
 
