@@ -1,4 +1,4 @@
--- OctoCooldowns 0.5.3
+-- OctoCooldowns 0.5.4
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -14,7 +14,7 @@ local AURA_SCAN_INTERVAL = 0.50
 local TIMER_FONT_PATH = "Fonts\\ARIALN.TTF"
 local TIMER_FONT_SIZE = 14
 local TIMER_FONT_FLAGS = "OUTLINE"
-local TIMER_FONT_NATIVE_MAX = 32
+local TIMER_FONT_RASTER_SIZE = 32
 local TIMER_PREVIEW_TEXT = "12.3"
 local updateElapsed = 0
 local barFrames = {}
@@ -954,15 +954,17 @@ end
 local function ApplyTimerFont(button, bar, timerText)
   if not button or not button.timer or not button.timer.SetFont then return end
   local fontSize = tonumber(bar.timerFontSize) or TIMER_FONT_SIZE
-  local nativeSize = math.min(fontSize, TIMER_FONT_NATIVE_MAX)
   if timerText == nil then timerText = button._ocdTimerText end
   if timerText == nil and button.timer.GetText then timerText = button.timer:GetText() end
   if timerText == nil then timerText = "" end
 
-  button.timer:SetFont(TIMER_FONT_PATH, nativeSize, TIMER_FONT_FLAGS)
-  button.timer:SetText(timerText)
-  if fontSize > nativeSize and button.timer.SetTextHeight then
+  if button.timer.SetTextHeight then
+    button.timer:SetFont(TIMER_FONT_PATH, TIMER_FONT_RASTER_SIZE, TIMER_FONT_FLAGS)
+    button.timer:SetText(timerText)
     button.timer:SetTextHeight(fontSize)
+  else
+    button.timer:SetFont(TIMER_FONT_PATH, fontSize, TIMER_FONT_FLAGS)
+    button.timer:SetText(timerText)
   end
 end
 
@@ -1104,10 +1106,11 @@ local function CreateIcon(barIndex, index, parent)
   b.icon = icon
 
   local timer = b:CreateFontString(nil, "OVERLAY")
-  timer:SetFont(TIMER_FONT_PATH, TIMER_FONT_SIZE, TIMER_FONT_FLAGS)
+  timer:SetFont(TIMER_FONT_PATH, TIMER_FONT_RASTER_SIZE, TIMER_FONT_FLAGS)
   timer:SetTextColor(1, 1, 1)
   timer:SetPoint("CENTER", b, "CENTER", 0, 0)
   timer:SetText("")
+  if timer.SetTextHeight then timer:SetTextHeight(TIMER_FONT_SIZE) end
   b.timer = timer
 
   local count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")

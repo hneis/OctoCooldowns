@@ -221,6 +221,11 @@ remains visible outside combat. Unlocked bars always show the entry for editing.
 
 ## Changelog
 
+### 0.5.4
+
+- Render every configured timer size from one fixed size-32 raster.
+- Use `SetTextHeight` for both smaller and larger timer sizes for consistent reload behavior.
+
 ### 0.5.3
 
 - Made timer font rendering deterministic after reload for sizes 8 through 100.
