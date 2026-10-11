@@ -168,6 +168,32 @@ combat:
 Only the ready, inactive state is hidden. An active aura or running cooldown
 remains visible outside combat. Unlocked bars always show the entry for editing.
 
+### Additional Timed Auras
+
+Evasion (`Ускользание`) and Sprint (`Спринт`) remain normal cooldown entries
+when added. To track their active buffs separately, add another copy on an aura
+bar and configure it:
+
+```text
+/ocd aura <entry> evasion
+/ocd aura <entry> sprint
+```
+
+The aura copy is hidden while inactive and shows a blue border with the actual
+buff time remaining. The normal copy continues to show the ability cooldown.
+
+New Slice and Dice (`Мясорубка`) entries default to aura-only because the
+ability has no separate cooldown worth displaying:
+
+```text
+/ocd aura <entry> sliceanddice
+```
+
+Aliases `slice-and-dice`, `slicedice`, `slice`, and `snd` are also accepted.
+Existing Evasion, Sprint, and Slice and Dice entries keep their previous normal
+cooldown behavior after updating. Use `/ocd aura <entry> off` to return any aura
+entry to normal cooldown tracking.
+
 ## Commands
 
 ```text
@@ -181,7 +207,7 @@ remains visible outside combat. Unlocked bars always show the entry for editing.
 /ocd add <name>          Add a spell by exact spellbook name.
 /ocd item <itemID>       Add an item by numeric item ID.
 /ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
-/ocd aura <n> <mode>     Set Blade Flurry, Ghostly Strike, combined, or off.
+/ocd aura <n> <mode>     Set a supported aura mode or return it to normal.
 /ocd ooc <n> <mode>      Hide or show ready combined Ghostly Strike out of combat.
 /ocd procstyle <mode>     Set red or hide for the active bar.
 /ocd procdebug <mode>     Enable, disable, or show proc diagnostics.
@@ -220,6 +246,14 @@ remains visible outside combat. Unlocked bars always show the entry for editing.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.6.0
+
+- Added timed-aura modes for Evasion, Sprint, and Slice and Dice.
+- Keep new Evasion and Sprint entries as normal cooldowns by default.
+- Make new Slice and Dice entries aura-only by default.
+- Preserve all existing Evasion, Sprint, and Slice and Dice entry modes.
+- Added English/Russian names and all relevant Vanilla rank IDs.
 
 ### 0.5.4
 

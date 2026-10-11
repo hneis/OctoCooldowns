@@ -1,4 +1,4 @@
--- OctoCooldowns 0.5.4
+-- OctoCooldowns 0.6.0
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -63,12 +63,27 @@ local AURA_NAMES = {
   ["Ghostly Strike"] = "ghostlystrike",
   ["ghostly strike"] = "ghostlystrike",
   ["Призрачный удар"] = "ghostlystrike",
-  ["призрачный удар"] = "ghostlystrike"
+  ["призрачный удар"] = "ghostlystrike",
+  ["Evasion"] = "evasion",
+  ["evasion"] = "evasion",
+  ["Ускользание"] = "evasion",
+  ["ускользание"] = "evasion",
+  ["Sprint"] = "sprint",
+  ["sprint"] = "sprint",
+  ["Спринт"] = "sprint",
+  ["спринт"] = "sprint",
+  ["Slice and Dice"] = "sliceanddice",
+  ["slice and dice"] = "sliceanddice",
+  ["Мясорубка"] = "sliceanddice",
+  ["мясорубка"] = "sliceanddice"
 }
 
 local AURA_KINDS = {
   bladeflurry = { timed = false, spellIDs = { [13877] = true } },
-  ghostlystrike = { timed = true, spellIDs = { [14278] = true } }
+  ghostlystrike = { timed = true, spellIDs = { [14278] = true } },
+  evasion = { timed = true, spellIDs = { [5277] = true } },
+  sprint = { timed = true, spellIDs = { [2983] = true, [8696] = true, [11305] = true } },
+  sliceanddice = { timed = true, spellIDs = { [5171] = true, [6774] = true } }
 }
 
 local function Chat(msg)
@@ -109,6 +124,9 @@ local function AuraKindByName(name)
     local spellID = tonumber(GetSpellIdForName(name))
     if spellID == 13877 then return "bladeflurry" end
     if spellID == 14278 then return "ghostlystrike" end
+    if spellID == 5277 then return "evasion" end
+    if spellID == 2983 or spellID == 8696 or spellID == 11305 then return "sprint" end
+    if spellID == 5171 or spellID == 6774 then return "sliceanddice" end
   end
   return nil
 end
@@ -120,6 +138,15 @@ end
 local function DefaultAuraMode(kind)
   if kind == "ghostlystrike" then return "combined" end
   return "only"
+end
+
+local function DefaultNewEntryAuraMode(kind)
+  if kind == "evasion" or kind == "sprint" then return nil end
+  return DefaultAuraMode(kind)
+end
+
+local function ShouldAutoMigrateAura(kind)
+  return kind == "bladeflurry" or kind == "ghostlystrike"
 end
 
 local function AuraEntryIsCombined(entry)
@@ -279,7 +306,8 @@ local function EnsureBar(bar, index)
       entry.reactive = ReactiveKindByName(entry.name)
     end
     if entry.kind == "spell" and entry.aura == nil and entry.reactive == nil then
-      entry.aura = AuraKindByName(entry.name)
+      local auraKind = AuraKindByName(entry.name)
+      if ShouldAutoMigrateAura(auraKind) then entry.aura = auraKind end
     end
     if IsAuraEntry(entry) and entry.auraMode ~= "only" and entry.auraMode ~= "combined" then
       entry.auraMode = DefaultAuraMode(entry.aura)
@@ -291,7 +319,7 @@ end
 
 local function EnsureDB()
   if not OctoCooldownsDB then
-    OctoCooldownsDB = { version = 9, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 10, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     return
   end
 
@@ -307,11 +335,11 @@ local function EnsureDB()
     if old.x ~= nil then bar.x = old.x end
     if old.y ~= nil then bar.y = old.y end
     if old.entries then bar.entries = old.entries end
-    OctoCooldownsDB = { version = 9, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
+    OctoCooldownsDB = { version = 10, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
     Chat("migrated 0.1 settings to multi-bar format")
   end
 
-  OctoCooldownsDB.version = 9
+  OctoCooldownsDB.version = 10
   if not OctoCooldownsDB.updateInterval then OctoCooldownsDB.updateInterval = DEFAULT_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval < MIN_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MIN_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval > MAX_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MAX_UPDATE_INTERVAL end
@@ -1144,6 +1172,8 @@ local function CreateIcon(barIndex, index, parent)
       GameTooltip:AddLine("Combined: aura duration, then ability cooldown", 0.15, 0.75, 1.0)
     elseif entry.aura == "ghostlystrike" then
       GameTooltip:AddLine("Timed aura: shown only while active", 0.15, 0.75, 1.0)
+    elseif IsAuraEntry(entry) and AURA_KINDS[entry.aura].timed then
+      GameTooltip:AddLine("Timed aura: shown only while active", 0.15, 0.75, 1.0)
     elseif entry.reactive == "riposte" then
       GameTooltip:AddLine("Reactive: show for 4 sec after you parry", 1.0, 0.82, 0.1)
     elseif entry.reactive == "surprise" then
@@ -1485,8 +1515,14 @@ function OCD:AddSpellByName(name, barIndex)
   end
   local e = { kind = "spell", name = realName }
   e.reactive = ReactiveKindByName(realName)
-  e.aura = AuraKindByName(realName)
-  if e.aura then e.auraMode = DefaultAuraMode(e.aura) end
+  local detectedAura = AuraKindByName(realName)
+  local defaultAuraMode = DefaultNewEntryAuraMode(detectedAura)
+  if detectedAura and defaultAuraMode then
+    e.aura = detectedAura
+    e.auraMode = defaultAuraMode
+  elseif detectedAura then
+    e.aura = false
+  end
   e._slot = slot
   e._rank = rank
   e._texture = texture
@@ -1556,10 +1592,20 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
   elseif mode == "ghostlystrike-combined" or mode == "ghostly-combined" or mode == "combined" then
     auraKind = "ghostlystrike"
     auraMode = "combined"
+  elseif mode == "evasion" or mode == "evasion-aura" then
+    auraKind = "evasion"
+    auraMode = "only"
+  elseif mode == "sprint" or mode == "sprint-aura" then
+    auraKind = "sprint"
+    auraMode = "only"
+  elseif mode == "sliceanddice" or mode == "slice-and-dice" or mode == "slicedice"
+      or mode == "slice" or mode == "snd" then
+    auraKind = "sliceanddice"
+    auraMode = "only"
   elseif mode == "off" or mode == "none" or mode == "normal" then
     auraKind = false
   else
-    Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|off")
+    Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|evasion|sprint|sliceanddice|off")
     return false
   end
 
@@ -2249,7 +2295,7 @@ local function Help()
   Chat("/ocd unlock | lock | unlockall | lockall")
   Chat("/ocd add <spell name> | item <itemID>")
   Chat("/ocd proc <entry> riposte|surprise|off")
-  Chat("/ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|off")
+  Chat("/ocd aura <entry> bladeflurry|ghostlystrike|combined|evasion|sprint|sliceanddice|off")
   Chat("/ocd ooc <entry> hide|show")
   Chat("/ocd procstyle red|hide")
   Chat("/ocd timerfont <8-100>|reset")
@@ -2329,7 +2375,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
     if entryIndex and mode then
       OCD:SetEntryAura(active, tonumber(entryIndex), mode)
     else
-      Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|off")
+      Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|combined|evasion|sprint|sliceanddice|off")
     end
   elseif cmd == "ooc" then
     local _, _, entryIndex, mode = string.find(rest, "^(%d+)%s+(%S+)$")
@@ -2395,7 +2441,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
   elseif cmd == "reset" then
     OCD:ResetBar(active)
   elseif cmd == "resetall" then
-    OctoCooldownsDB = { version = 9, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 10, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     Chat("all settings reset")
