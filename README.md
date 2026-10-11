@@ -213,7 +213,7 @@ Mode markers and Alt-click configuration are disabled while the bar is locked.
 Alt-dragging an icon does not toggle its mode after the drop.
 Mode markers are hidden for icon sizes below 32 or when the configured timer
 font leaves too little space, avoiding overlaps with timer and item-count text.
-Alt-click and tooltip configuration remain available.
+Alt-click configuration remains available.
 
 ### Build Changes And Passive Auras
 
@@ -221,7 +221,7 @@ Tracked spells that are no longer learned after changing talents are preserved:
 
 - locked bars hide unavailable entries;
 - unlocked bars show them dimmed with their cached or catalog icon;
-- tooltips and `/ocd list` mark them unavailable;
+- `/ocd list` marks them unavailable;
 - returning to the old build restores them automatically after `SPELLS_CHANGED`.
 
 Remorseless Attacks is tracked as a synthetic aura because the active buff is
@@ -246,6 +246,24 @@ self-buff duration for the combo points used:
 Existing Envenom entries keep their previous mode. Use `/ocd aura <entry> off`
 to return to normal tracking.
 
+Relentless Strikes and Taste for Blood use the same synthetic aura registry:
+
+```text
+/ocd addbuff relentless
+/ocd addbuff tasteforblood
+```
+
+Relentless Strikes shows its actual aura timer and stack count in the lower
+right corner. Taste for Blood shows only its actual aura timer because the
+OctoWoW buff has no stack count. Remorseless remains available through:
+
+```text
+/ocd addbuff remorseless
+```
+
+Hover tooltips are disabled for all tracked icons. The addon keeps only its
+private hidden tooltip used internally for localized aura scanning.
+
 ## Commands
 
 ```text
@@ -257,7 +275,7 @@ to return to normal tracking.
 /ocd center              Horizontally center the active bar, keeping its Y.
 /ocd centerall           Horizontally center all bars, keeping each Y.
 /ocd add <name>          Add a spell by exact spellbook name.
-/ocd addbuff remorseless Add the synthetic Remorseless aura.
+/ocd addbuff <name>      Add Remorseless, Relentless, or Taste for Blood.
 /ocd item <itemID>       Add an item by numeric item ID.
 /ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
 /ocd aura <n> <mode>     Set a supported aura mode or return it to normal.
@@ -299,6 +317,14 @@ to return to normal tracking.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.9.0
+
+- Added synthetic Relentless Strikes aura tracking with timer and stack count.
+- Added synthetic Taste for Blood aura tracking with its live duration.
+- Generalized `/ocd addbuff` for Remorseless, Relentless, and Taste for Blood.
+- Added aura stack data from Vanilla and extended client APIs.
+- Removed all hover tooltips from tracked icons while preserving drag targets.
 
 ### 0.8.0
 
