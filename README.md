@@ -157,6 +157,17 @@ Combined mode uses one icon for the complete cycle:
 The same spell can be tracked in separate bars with different modes. Use
 `/ocd aura <entry> off` for normal cooldown-only behavior.
 
+Combined Ghostly Strike entries can hide their fully ready state while outside
+combat:
+
+```text
+/ocd ooc <entry> hide
+/ocd ooc <entry> show
+```
+
+Only the ready, inactive state is hidden. An active aura or running cooldown
+remains visible outside combat. Unlocked bars always show the entry for editing.
+
 ## Commands
 
 ```text
@@ -171,6 +182,7 @@ The same spell can be tracked in separate bars with different modes. Use
 /ocd item <itemID>       Add an item by numeric item ID.
 /ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
 /ocd aura <n> <mode>     Set Blade Flurry, Ghostly Strike, combined, or off.
+/ocd ooc <n> <mode>      Hide or show ready combined Ghostly Strike out of combat.
 /ocd procstyle <mode>     Set red or hide for the active bar.
 /ocd procdebug <mode>     Enable, disable, or show proc diagnostics.
 /ocd timerfont <8-100>    Set timer font size for the active bar.
@@ -208,6 +220,12 @@ The same spell can be tracked in separate bars with different modes. Use
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.5.1
+
+- Added per-entry hiding of ready combined Ghostly Strike outside combat.
+- Keep active aura and cooldown states visible outside combat.
+- Added `/ocd ooc <entry> hide|show` and list status output.
 
 ### 0.5.0
 

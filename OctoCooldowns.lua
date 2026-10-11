@@ -1,4 +1,4 @@
--- OctoCooldowns 0.5.0
+-- OctoCooldowns 0.5.1
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -21,6 +21,7 @@ local barFrames = {}
 local itemCountCache = {}
 local bagCountsDirty = false
 local targetSerial = 0
+local playerInCombat = false
 local reactivePatterns = {}
 local enhancedReactiveEventsRegistered = false
 local reactiveDebug = false
@@ -81,6 +82,14 @@ local function Trim(s)
   s = string.gsub(s, "^%s+", "")
   s = string.gsub(s, "%s+$", "")
   return s
+end
+
+local function RefreshPlayerCombatState()
+  if type(UnitAffectingCombat) == "function" then
+    local value = UnitAffectingCombat("player")
+    playerInCombat = value == true or value == 1
+  end
+  return playerInCombat
 end
 
 local function ReactiveKindByName(name)
@@ -275,13 +284,14 @@ local function EnsureBar(bar, index)
     if IsAuraEntry(entry) and entry.auraMode ~= "only" and entry.auraMode ~= "combined" then
       entry.auraMode = DefaultAuraMode(entry.aura)
     end
+    if entry.hideReadyOutOfCombat ~= true then entry.hideReadyOutOfCombat = false end
     i = i + 1
   end
 end
 
 local function EnsureDB()
   if not OctoCooldownsDB then
-    OctoCooldownsDB = { version = 8, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 9, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     return
   end
 
@@ -297,11 +307,11 @@ local function EnsureDB()
     if old.x ~= nil then bar.x = old.x end
     if old.y ~= nil then bar.y = old.y end
     if old.entries then bar.entries = old.entries end
-    OctoCooldownsDB = { version = 8, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
+    OctoCooldownsDB = { version = 9, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
     Chat("migrated 0.1 settings to multi-bar format")
   end
 
-  OctoCooldownsDB.version = 8
+  OctoCooldownsDB.version = 9
   if not OctoCooldownsDB.updateInterval then OctoCooldownsDB.updateInterval = DEFAULT_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval < MIN_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MIN_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval > MAX_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MAX_UPDATE_INTERVAL end
@@ -739,7 +749,12 @@ end
 local function EntryShouldShow(entry, bar)
   if IsAuraEntry(entry) then
     if not bar.locked then return true end
-    if AuraEntryIsCombined(entry) then return true end
+    if AuraEntryIsCombined(entry) then
+      if AuraEntryIsActive(entry) then return true end
+      if ReactiveCooldownRemaining(entry, GetTime()) > 0 then return true end
+      if entry.hideReadyOutOfCombat and not playerInCombat then return false end
+      return true
+    end
     return AuraEntryIsActive(entry)
   end
   if not IsReactiveEntry(entry) then return true end
@@ -1495,6 +1510,7 @@ function OCD:SetEntryReactive(barIndex, entryIndex, mode)
   if mode then
     entry.aura = false
     entry.auraMode = nil
+    entry.hideReadyOutOfCombat = false
   end
   self:RebuildBar(barIndex)
   if mode then
@@ -1534,6 +1550,11 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
 
   entry.aura = auraKind
   entry.auraMode = auraMode
+  if auraKind ~= "ghostlystrike" or auraMode ~= "combined" then
+    entry.hideReadyOutOfCombat = false
+  elseif entry.hideReadyOutOfCombat ~= true then
+    entry.hideReadyOutOfCombat = false
+  end
   if auraKind then entry.reactive = false end
   auraScanDirty = true
   RefreshPlayerAuraSnapshot(true)
@@ -1543,6 +1564,29 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
   else
     Chat("entry " .. entryIndex .. " uses normal cooldown tracking")
   end
+  return true
+end
+
+function OCD:SetEntryOOCReady(barIndex, entryIndex, mode)
+  local bar = GetBar(barIndex)
+  local entry = bar and bar.entries[entryIndex]
+  if not entry or entry.aura ~= "ghostlystrike" or entry.auraMode ~= "combined" then
+    Chat("ooc setting requires a combined Ghostly Strike entry")
+    return false
+  end
+
+  mode = string.lower(Trim(mode or ""))
+  if mode == "hide" then
+    entry.hideReadyOutOfCombat = true
+  elseif mode == "show" then
+    entry.hideReadyOutOfCombat = false
+  else
+    Chat("usage: /ocd ooc <entry> hide|show")
+    return false
+  end
+
+  self:RebuildBar(barIndex)
+  Chat("ready Ghostly Strike outside combat: " .. (entry.hideReadyOutOfCombat and "hidden" or "shown"))
   return true
 end
 
@@ -1960,6 +2004,7 @@ function OCD:List(barIndex)
       if e.reactive then reactiveLabel = " [proc: " .. e.reactive .. "]" end
       local auraLabel = ""
       if e.aura then auraLabel = " [aura: " .. e.aura .. "/" .. tostring(e.auraMode or DefaultAuraMode(e.aura)) .. "]" end
+      if e.hideReadyOutOfCombat then auraLabel = auraLabel .. " [ooc-ready:hidden]" end
       Chat(i .. ". spell: " .. (e.name or "?") .. reactiveLabel .. auraLabel)
     else
       Chat(i .. ". item: " .. (e.name or "?") .. " [" .. tostring(e.itemID) .. "]")
@@ -2199,6 +2244,7 @@ local function Help()
   Chat("/ocd add <spell name> | item <itemID>")
   Chat("/ocd proc <entry> riposte|surprise|off")
   Chat("/ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|off")
+  Chat("/ocd ooc <entry> hide|show")
   Chat("/ocd procstyle red|hide")
   Chat("/ocd timerfont <8-100>|reset")
   Chat("/ocd procdebug on|off|status")
@@ -2279,6 +2325,13 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
     else
       Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|off")
     end
+  elseif cmd == "ooc" then
+    local _, _, entryIndex, mode = string.find(rest, "^(%d+)%s+(%S+)$")
+    if entryIndex and mode then
+      OCD:SetEntryOOCReady(active, tonumber(entryIndex), mode)
+    else
+      Chat("usage: /ocd ooc <entry> hide|show")
+    end
   elseif cmd == "procstyle" or cmd == "proc-style" then
     OCD:SetProcCooldownMode(active, rest)
   elseif cmd == "timerfont" or cmd == "fontsize" or cmd == "font" then
@@ -2336,7 +2389,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
   elseif cmd == "reset" then
     OCD:ResetBar(active)
   elseif cmd == "resetall" then
-    OctoCooldownsDB = { version = 8, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 9, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     Chat("all settings reset")
@@ -2366,11 +2419,14 @@ OCD:RegisterEvent("UNIT_HEALTH")
 OCD:RegisterEvent("ACTIONBAR_UPDATE_USABLE")
 OCD:RegisterEvent("SPELL_UPDATE_USABLE")
 OCD:RegisterEvent("PLAYER_AURAS_CHANGED")
+OCD:RegisterEvent("PLAYER_REGEN_DISABLED")
+OCD:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 OCD:SetScript("OnEvent", function()
   if event == "VARIABLES_LOADED" then
     InitializeReactivePatterns()
     EnsureDB()
+    RefreshPlayerCombatState()
     OCD:RegisterEnhancedReactiveEvents()
     OCD:ClearReactiveStates(false)
     RefreshPlayerAuraSnapshot(true)
@@ -2393,6 +2449,7 @@ OCD:SetScript("OnEvent", function()
   elseif event == "PLAYER_ENTERING_WORLD" then
     if OctoCooldownsDB then
       OCD:ClearReactiveStates(false)
+      RefreshPlayerCombatState()
       auraScanDirty = true
       RefreshPlayerAuraSnapshot(true)
       OCD:RebuildAll(true)
@@ -2400,6 +2457,9 @@ OCD:SetScript("OnEvent", function()
     end
   elseif event == "BAG_UPDATE" then
     if OctoCooldownsDB then bagCountsDirty = true end
+  elseif event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
+    playerInCombat = event == "PLAYER_REGEN_DISABLED"
+    if OctoCooldownsDB then OCD:RebuildAll(false) end
   elseif event == "PLAYER_AURAS_CHANGED" or event == "BUFF_ADDED_SELF" or event == "BUFF_REMOVED_SELF" then
     if OctoCooldownsDB then
       auraScanDirty = true
