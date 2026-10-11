@@ -1,4 +1,4 @@
--- OctoCooldowns 0.5.2
+-- OctoCooldowns 0.5.3
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -951,20 +951,25 @@ local function FormatTime(remain)
   return ""
 end
 
-local function ApplyTimerFont(button, bar)
+local function ApplyTimerFont(button, bar, timerText)
   if not button or not button.timer or not button.timer.SetFont then return end
   local fontSize = tonumber(bar.timerFontSize) or TIMER_FONT_SIZE
   local nativeSize = math.min(fontSize, TIMER_FONT_NATIVE_MAX)
+  if timerText == nil then timerText = button._ocdTimerText end
+  if timerText == nil and button.timer.GetText then timerText = button.timer:GetText() end
+  if timerText == nil then timerText = "" end
+
   button.timer:SetFont(TIMER_FONT_PATH, nativeSize, TIMER_FONT_FLAGS)
-  if button.timer.SetTextHeight then button.timer:SetTextHeight(fontSize) end
+  button.timer:SetText(timerText)
+  if fontSize > nativeSize and button.timer.SetTextHeight then
+    button.timer:SetTextHeight(fontSize)
+  end
 end
 
 local function SetTimerText(button, bar, timerText)
   if button._ocdTimerText == timerText then return end
-  button.timer:SetText(timerText)
   button._ocdTimerText = timerText
-  -- Vanilla can reset SetTextHeight when the string contents change.
-  ApplyTimerFont(button, bar)
+  ApplyTimerFont(button, bar, timerText)
 end
 
 local function TimerTextWithPreview(bar, timerText)
@@ -1100,7 +1105,6 @@ local function CreateIcon(barIndex, index, parent)
 
   local timer = b:CreateFontString(nil, "OVERLAY")
   timer:SetFont(TIMER_FONT_PATH, TIMER_FONT_SIZE, TIMER_FONT_FLAGS)
-  if timer.SetTextHeight then timer:SetTextHeight(TIMER_FONT_SIZE) end
   timer:SetTextColor(1, 1, 1)
   timer:SetPoint("CENTER", b, "CENTER", 0, 0)
   timer:SetText("")

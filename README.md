@@ -221,6 +221,12 @@ remains visible outside combat. Unlocked bars always show the entry for editing.
 
 ## Changelog
 
+### 0.5.3
+
+- Made timer font rendering deterministic after reload for sizes 8 through 100.
+- Apply font raster before text and scale only sizes above Vanilla's native limit.
+- Force current timer text through the render path when the configured size changes.
+
 ### 0.5.2
 
 - Reapply timer font scaling after every timer text change on Vanilla.
