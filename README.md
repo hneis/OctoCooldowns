@@ -221,6 +221,11 @@ remains visible outside combat. Unlocked bars always show the entry for editing.
 
 ## Changelog
 
+### 0.5.2
+
+- Reapply timer font scaling after every timer text change on Vanilla.
+- Fixed large font sizes for previews, aura timers, procs, and cooldowns.
+
 ### 0.5.1
 
 - Added per-entry hiding of ready combined Ghostly Strike outside combat.

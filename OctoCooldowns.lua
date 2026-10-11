@@ -1,4 +1,4 @@
--- OctoCooldowns 0.5.1
+-- OctoCooldowns 0.5.2
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -959,6 +959,14 @@ local function ApplyTimerFont(button, bar)
   if button.timer.SetTextHeight then button.timer:SetTextHeight(fontSize) end
 end
 
+local function SetTimerText(button, bar, timerText)
+  if button._ocdTimerText == timerText then return end
+  button.timer:SetText(timerText)
+  button._ocdTimerText = timerText
+  -- Vanilla can reset SetTextHeight when the string contents change.
+  ApplyTimerFont(button, bar)
+end
+
 local function TimerTextWithPreview(bar, timerText)
   if timerText == "" and not bar.locked then return TIMER_PREVIEW_TEXT end
   return timerText
@@ -1830,10 +1838,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           timerText = FormatTime(cooldownRemaining)
         end
         timerText = TimerTextWithPreview(bar, timerText)
-        if b._ocdTimerText ~= timerText then
-          b.timer:SetText(timerText)
-          b._ocdTimerText = timerText
-        end
+        SetTimerText(b, bar, timerText)
       elseif IsReactiveEntry(e) then
         local state = reactiveState[e.reactive]
         local remain = 0
@@ -1863,10 +1868,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           b._ocdReactiveVisual = visualState
           b._ocdAuraVisual = nil
         end
-        if b._ocdTimerText ~= timerText then
-          b.timer:SetText(timerText)
-          b._ocdTimerText = timerText
-        end
+        SetTimerText(b, bar, timerText)
       else
         if b._ocdVisualMode ~= "cooldown" then
           b._ocdVisualMode = "cooldown"
@@ -1910,10 +1912,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           end
           b._ocdCooldownActive = cooldownActive
         end
-        if b._ocdTimerText ~= timerText then
-          b.timer:SetText(timerText)
-          b._ocdTimerText = timerText
-        end
+        SetTimerText(b, bar, timerText)
       end
     end
     i = i + 1
