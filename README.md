@@ -132,6 +132,31 @@ manually:
 /ocd aura <entry> off
 ```
 
+`Ghostly Strike` (`Призрачный удар`) is recognized automatically and defaults
+to combined mode. Its aura duration is read from the active player buff rather
+than assumed to be a fixed number of seconds.
+
+```text
+/ocd aura <entry> ghostlystrike
+```
+
+Aura-only mode hides the icon while the buff is inactive and shows a blue
+border with the remaining aura duration while active.
+
+```text
+/ocd aura <entry> ghostlystrike-combined
+```
+
+Combined mode uses one icon for the complete cycle:
+
+- ready spell: full brightness with no timer;
+- active Ghostly Strike aura: blue border and aura time remaining;
+- aura expired while the spell is still cooling down: dimmed icon and spell
+  cooldown remaining.
+
+The same spell can be tracked in separate bars with different modes. Use
+`/ocd aura <entry> off` for normal cooldown-only behavior.
+
 ## Commands
 
 ```text
@@ -145,7 +170,7 @@ manually:
 /ocd add <name>          Add a spell by exact spellbook name.
 /ocd item <itemID>       Add an item by numeric item ID.
 /ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
-/ocd aura <n> <mode>     Set bladeflurry or off for spell entry n.
+/ocd aura <n> <mode>     Set Blade Flurry, Ghostly Strike, combined, or off.
 /ocd procstyle <mode>     Set red or hide for the active bar.
 /ocd procdebug <mode>     Enable, disable, or show proc diagnostics.
 /ocd timerfont <8-100>    Set timer font size for the active bar.
@@ -183,6 +208,13 @@ manually:
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.5.0
+
+- Added timed-aura tracking for Ghostly Strike using the actual player buff.
+- Added aura-only and combined Ghostly Strike display modes.
+- In combined mode, switch from aura duration to spell cooldown automatically.
+- Added English/Russian recognition and spell ID `14278` fallback.
 
 ### 0.4.4
 

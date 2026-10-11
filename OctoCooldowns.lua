@@ -1,4 +1,4 @@
--- OctoCooldowns 0.4.4
+-- OctoCooldowns 0.5.0
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -58,7 +58,16 @@ local AURA_NAMES = {
   ["Blade Flurry"] = "bladeflurry",
   ["blade flurry"] = "bladeflurry",
   ["Шквал клинков"] = "bladeflurry",
-  ["шквал клинков"] = "bladeflurry"
+  ["шквал клинков"] = "bladeflurry",
+  ["Ghostly Strike"] = "ghostlystrike",
+  ["ghostly strike"] = "ghostlystrike",
+  ["Призрачный удар"] = "ghostlystrike",
+  ["призрачный удар"] = "ghostlystrike"
+}
+
+local AURA_KINDS = {
+  bladeflurry = { timed = false, spellIDs = { [13877] = true } },
+  ghostlystrike = { timed = true, spellIDs = { [14278] = true } }
 }
 
 local function Chat(msg)
@@ -85,11 +94,27 @@ end
 
 local function AuraKindByName(name)
   if not name then return nil end
-  return AURA_NAMES[name] or AURA_NAMES[string.lower(name)]
+  local kind = AURA_NAMES[name] or AURA_NAMES[string.lower(name)]
+  if kind then return kind end
+  if type(GetSpellIdForName) == "function" then
+    local spellID = tonumber(GetSpellIdForName(name))
+    if spellID == 13877 then return "bladeflurry" end
+    if spellID == 14278 then return "ghostlystrike" end
+  end
+  return nil
 end
 
 local function IsAuraEntry(entry)
-  return entry and entry.kind == "spell" and entry.aura == "bladeflurry"
+  return entry and entry.kind == "spell" and AURA_KINDS[entry.aura] ~= nil
+end
+
+local function DefaultAuraMode(kind)
+  if kind == "ghostlystrike" then return "combined" end
+  return "only"
+end
+
+local function AuraEntryIsCombined(entry)
+  return IsAuraEntry(entry) and entry.auraMode == "combined"
 end
 
 local PATTERN_MAGIC = {
@@ -247,13 +272,16 @@ local function EnsureBar(bar, index)
     if entry.kind == "spell" and entry.aura == nil and entry.reactive == nil then
       entry.aura = AuraKindByName(entry.name)
     end
+    if IsAuraEntry(entry) and entry.auraMode ~= "only" and entry.auraMode ~= "combined" then
+      entry.auraMode = DefaultAuraMode(entry.aura)
+    end
     i = i + 1
   end
 end
 
 local function EnsureDB()
   if not OctoCooldownsDB then
-    OctoCooldownsDB = { version = 7, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 8, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     return
   end
 
@@ -269,11 +297,11 @@ local function EnsureDB()
     if old.x ~= nil then bar.x = old.x end
     if old.y ~= nil then bar.y = old.y end
     if old.entries then bar.entries = old.entries end
-    OctoCooldownsDB = { version = 7, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
+    OctoCooldownsDB = { version = 8, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
     Chat("migrated 0.1 settings to multi-bar format")
   end
 
-  OctoCooldownsDB.version = 7
+  OctoCooldownsDB.version = 8
   if not OctoCooldownsDB.updateInterval then OctoCooldownsDB.updateInterval = DEFAULT_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval < MIN_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MIN_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval > MAX_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MAX_UPDATE_INTERVAL end
@@ -386,7 +414,7 @@ local function RefreshPlayerAuraSnapshot(force)
   local tooltip = GetAuraScanTooltip()
   local visibleSlot = 0
   while visibleSlot < 32 do
-    local buffIndex = GetPlayerBuff(visibleSlot, "HELPFUL")
+    local buffIndex, untilCancelled = GetPlayerBuff(visibleSlot, "HELPFUL")
     if buffIndex and buffIndex >= 0 then
       local texture = nil
       if type(GetPlayerBuffTexture) == "function" then texture = GetPlayerBuffTexture(buffIndex) end
@@ -400,8 +428,27 @@ local function RefreshPlayerAuraSnapshot(force)
       end
       local auraName = nil
       if line and line.GetText then auraName = line:GetText() end
-      if auraName and auraName ~= "" then snapshot.byName[auraName] = true end
-      if texture then snapshot.byTexture[texture] = true end
+      local remaining = 0
+      if type(GetPlayerBuffTimeLeft) == "function" then
+        remaining = tonumber(GetPlayerBuffTimeLeft(buffIndex)) or 0
+      end
+      local record = {
+        name = auraName,
+        texture = texture,
+        buffIndex = buffIndex,
+        persistent = untilCancelled == 1 or untilCancelled == true,
+        remaining = remaining
+      }
+      if remaining > 0 then record.expiresAt = now + remaining end
+      if type(GetPlayerBuffID) == "function" then
+        local spellID = tonumber(GetPlayerBuffID(buffIndex))
+        if spellID then
+          record.spellID = spellID
+          snapshot.bySpellID[spellID] = record
+        end
+      end
+      if auraName and auraName ~= "" then snapshot.byName[auraName] = record end
+      if texture then snapshot.byTexture[texture] = record end
       snapshot.count = snapshot.count + 1
     else
       break
@@ -414,27 +461,50 @@ local function RefreshPlayerAuraSnapshot(force)
     while unitSlot <= 32 do
       local texture, stacks, spellID = UnitBuff("player", unitSlot)
       if not texture then break end
-      snapshot.byTexture[texture] = true
       spellID = tonumber(spellID)
-      if spellID then snapshot.bySpellID[spellID] = true end
+      if spellID and not snapshot.bySpellID[spellID] then
+        snapshot.bySpellID[spellID] = { texture = texture, spellID = spellID, remaining = 0 }
+      end
       unitSlot = unitSlot + 1
     end
   end
   tooltip:Hide()
 end
 
-local function AuraEntryIsActive(entry)
-  if not IsAuraEntry(entry) then return false end
-  if entry.name and playerAuraSnapshot.byName[entry.name] then return true end
+local function FindAuraEntryState(entry)
+  if not IsAuraEntry(entry) then return nil end
+  if entry.name and playerAuraSnapshot.byName[entry.name] then return playerAuraSnapshot.byName[entry.name] end
 
   if type(GetSpellIdForName) == "function" and entry.name then
-    local spellID = GetSpellIdForName(entry.name)
-    if spellID and playerAuraSnapshot.bySpellID[tonumber(spellID) or spellID] then return true end
+    local spellID = tonumber(GetSpellIdForName(entry.name))
+    if spellID and playerAuraSnapshot.bySpellID[spellID] then return playerAuraSnapshot.bySpellID[spellID] end
   end
 
-  if entry.aura == "bladeflurry" and playerAuraSnapshot.bySpellID[13877] then return true end
-  if entry._texture and playerAuraSnapshot.byTexture[entry._texture] then return true end
-  return false
+  local auraKind = AURA_KINDS[entry.aura]
+  if auraKind and auraKind.spellIDs then
+    local spellID, enabled = next(auraKind.spellIDs, nil)
+    while spellID do
+      if enabled and playerAuraSnapshot.bySpellID[spellID] then return playerAuraSnapshot.bySpellID[spellID] end
+      spellID, enabled = next(auraKind.spellIDs, spellID)
+    end
+  end
+
+  if entry._texture and playerAuraSnapshot.byTexture[entry._texture] then
+    return playerAuraSnapshot.byTexture[entry._texture]
+  end
+  return nil
+end
+
+local function AuraEntryIsActive(entry)
+  return FindAuraEntryState(entry) ~= nil
+end
+
+local function AuraEntryRemaining(entry, now)
+  local state = FindAuraEntryState(entry)
+  if not state or not state.expiresAt then return 0 end
+  local remain = state.expiresAt - (now or GetTime())
+  if remain > 0.05 then return remain end
+  return 0
 end
 
 local function LegacyTrue(value)
@@ -669,6 +739,7 @@ end
 local function EntryShouldShow(entry, bar)
   if IsAuraEntry(entry) then
     if not bar.locked then return true end
+    if AuraEntryIsCombined(entry) then return true end
     return AuraEntryIsActive(entry)
   end
   if not IsReactiveEntry(entry) then return true end
@@ -1039,6 +1110,10 @@ local function CreateIcon(barIndex, index, parent)
     end
     if entry.aura == "bladeflurry" then
       GameTooltip:AddLine("Toggle aura: shown only while active", 0.15, 0.75, 1.0)
+    elseif entry.aura == "ghostlystrike" and entry.auraMode == "combined" then
+      GameTooltip:AddLine("Combined: aura duration, then ability cooldown", 0.15, 0.75, 1.0)
+    elseif entry.aura == "ghostlystrike" then
+      GameTooltip:AddLine("Timed aura: shown only while active", 0.15, 0.75, 1.0)
     elseif entry.reactive == "riposte" then
       GameTooltip:AddLine("Reactive: show for 4 sec after you parry", 1.0, 0.82, 0.1)
     elseif entry.reactive == "surprise" then
@@ -1381,6 +1456,7 @@ function OCD:AddSpellByName(name, barIndex)
   local e = { kind = "spell", name = realName }
   e.reactive = ReactiveKindByName(realName)
   e.aura = AuraKindByName(realName)
+  if e.aura then e.auraMode = DefaultAuraMode(e.aura) end
   e._slot = slot
   e._rank = rank
   e._texture = texture
@@ -1388,7 +1464,7 @@ function OCD:AddSpellByName(name, barIndex)
   local reactiveLabel = ""
   if e.reactive then reactiveLabel = " (reactive: " .. e.reactive .. ")" end
   local auraLabel = ""
-  if e.aura then auraLabel = " (aura: " .. e.aura .. ")" end
+  if e.aura then auraLabel = " (aura: " .. e.aura .. "/" .. e.auraMode .. ")" end
   Chat("added spell to [" .. bar.name .. "]: " .. realName .. reactiveLabel .. auraLabel)
   if e.aura then
     auraScanDirty = true
@@ -1416,7 +1492,10 @@ function OCD:SetEntryReactive(barIndex, entryIndex, mode)
   end
 
   entry.reactive = mode
-  if mode then entry.aura = false end
+  if mode then
+    entry.aura = false
+    entry.auraMode = nil
+  end
   self:RebuildBar(barIndex)
   if mode then
     Chat("entry " .. entryIndex .. " is reactive: " .. mode)
@@ -1435,20 +1514,32 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
   end
 
   mode = string.lower(Trim(mode or ""))
-  if mode == "blade-flurry" or mode == "blade" then mode = "bladeflurry" end
-  if mode == "off" or mode == "none" or mode == "normal" then mode = false end
-  if mode ~= false and mode ~= "bladeflurry" then
-    Chat("usage: /ocd aura <entry> bladeflurry|off")
+  local auraKind = nil
+  local auraMode = nil
+  if mode == "bladeflurry" or mode == "blade-flurry" or mode == "blade" then
+    auraKind = "bladeflurry"
+    auraMode = "only"
+  elseif mode == "ghostlystrike" or mode == "ghostly-strike" or mode == "ghostly" then
+    auraKind = "ghostlystrike"
+    auraMode = "only"
+  elseif mode == "ghostlystrike-combined" or mode == "ghostly-combined" or mode == "combined" then
+    auraKind = "ghostlystrike"
+    auraMode = "combined"
+  elseif mode == "off" or mode == "none" or mode == "normal" then
+    auraKind = false
+  else
+    Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|off")
     return false
   end
 
-  entry.aura = mode
-  if mode then entry.reactive = false end
+  entry.aura = auraKind
+  entry.auraMode = auraMode
+  if auraKind then entry.reactive = false end
   auraScanDirty = true
   RefreshPlayerAuraSnapshot(true)
   self:RebuildBar(barIndex)
-  if mode then
-    Chat("entry " .. entryIndex .. " tracks aura: " .. mode)
+  if auraKind then
+    Chat("entry " .. entryIndex .. " tracks aura: " .. auraKind .. "/" .. auraMode)
   else
     Chat("entry " .. entryIndex .. " uses normal cooldown tracking")
   end
@@ -1530,10 +1621,18 @@ function OCD:SetProcDebug(mode)
       .. " autoOther=" .. tostring(enhancedReactiveSeen.autoOther)
       .. " spellSelf=" .. tostring(enhancedReactiveSeen.spellMissSelf)
       .. " spellOther=" .. tostring(enhancedReactiveSeen.spellMissOther))
+    local bladeState = playerAuraSnapshot.byName["Blade Flurry"]
+      or playerAuraSnapshot.byName["Шквал клинков"] or playerAuraSnapshot.bySpellID[13877]
+    local ghostlyState = playerAuraSnapshot.byName["Ghostly Strike"]
+      or playerAuraSnapshot.byName["Призрачный удар"] or playerAuraSnapshot.bySpellID[14278]
+    local ghostlyRemaining = 0
+    if ghostlyState and ghostlyState.expiresAt then
+      ghostlyRemaining = math.max(0, ghostlyState.expiresAt - GetTime())
+    end
     Chat("player auras=" .. tostring(playerAuraSnapshot.count)
-      .. " Blade Flurry=" .. tostring(playerAuraSnapshot.byName["Blade Flurry"]
-        or playerAuraSnapshot.byName["Шквал клинков"]
-        or playerAuraSnapshot.bySpellID[13877]))
+      .. " Blade Flurry=" .. tostring(bladeState ~= nil)
+      .. " Ghostly Strike=" .. tostring(ghostlyState ~= nil)
+      .. " remain=" .. string.format("%.2f", ghostlyRemaining))
     local kinds = { "riposte", "surprise" }
     local i = 1
     while i <= table.getn(kinds) do
@@ -1648,20 +1747,45 @@ function OCD:UpdateBarCooldowns(barIndex)
     if b and b:IsShown() then
       if IsAuraEntry(e) then
         local auraActive = AuraEntryIsActive(e)
-        if b._ocdVisualMode ~= "aura" or b._ocdAuraActive ~= auraActive then
-          if auraActive then
+        local auraKind = AURA_KINDS[e.aura]
+        local auraRemaining = AuraEntryRemaining(e, now)
+        local cooldownRemaining = 0
+        if not auraActive and AuraEntryIsCombined(e) then
+          cooldownRemaining = ReactiveCooldownRemaining(e, now)
+        end
+        local visualState = "inactive"
+        if auraActive then
+          visualState = "active"
+        elseif AuraEntryIsCombined(e) then
+          if cooldownRemaining > 0 then visualState = "cooldown" else visualState = "ready" end
+        end
+
+        if b._ocdVisualMode ~= "aura" or b._ocdAuraVisual ~= visualState then
+          if visualState == "active" then
             b.border:SetTexture(0.15, 0.75, 1.0, 1)
+            b.icon:SetVertexColor(1, 1, 1)
+          elseif visualState == "cooldown" then
+            b.border:SetTexture(0, 0, 0, 1)
+            b.icon:SetVertexColor(0.35, 0.35, 0.35)
+          elseif visualState == "ready" then
+            b.border:SetTexture(0, 0, 0, 1)
             b.icon:SetVertexColor(1, 1, 1)
           else
             b.border:SetTexture(0, 0, 0, 1)
             b.icon:SetVertexColor(0.35, 0.35, 0.35)
           end
           b._ocdVisualMode = "aura"
-          b._ocdAuraActive = auraActive
+          b._ocdAuraVisual = visualState
           b._ocdReactiveVisual = nil
           b._ocdCooldownActive = nil
         end
-        local timerText = TimerTextWithPreview(bar, "")
+        local timerText = ""
+        if auraActive and auraKind and auraKind.timed and auraRemaining > 0 then
+          timerText = FormatTime(auraRemaining)
+        elseif not auraActive and AuraEntryIsCombined(e) and cooldownRemaining > 0 then
+          timerText = FormatTime(cooldownRemaining)
+        end
+        timerText = TimerTextWithPreview(bar, timerText)
         if b._ocdTimerText ~= timerText then
           b.timer:SetText(timerText)
           b._ocdTimerText = timerText
@@ -1693,7 +1817,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           end
           b._ocdVisualMode = "reactive"
           b._ocdReactiveVisual = visualState
-          b._ocdAuraActive = nil
+          b._ocdAuraVisual = nil
         end
         if b._ocdTimerText ~= timerText then
           b.timer:SetText(timerText)
@@ -1705,7 +1829,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           b._ocdCooldownActive = nil
           b._ocdTimerText = nil
           b._ocdReactiveVisual = nil
-          b._ocdAuraActive = nil
+          b._ocdAuraVisual = nil
           b.border:SetTexture(0, 0, 0, 1)
         end
 
@@ -1835,7 +1959,7 @@ function OCD:List(barIndex)
       local reactiveLabel = ""
       if e.reactive then reactiveLabel = " [proc: " .. e.reactive .. "]" end
       local auraLabel = ""
-      if e.aura then auraLabel = " [aura: " .. e.aura .. "]" end
+      if e.aura then auraLabel = " [aura: " .. e.aura .. "/" .. tostring(e.auraMode or DefaultAuraMode(e.aura)) .. "]" end
       Chat(i .. ". spell: " .. (e.name or "?") .. reactiveLabel .. auraLabel)
     else
       Chat(i .. ". item: " .. (e.name or "?") .. " [" .. tostring(e.itemID) .. "]")
@@ -2074,7 +2198,7 @@ local function Help()
   Chat("/ocd unlock | lock | unlockall | lockall")
   Chat("/ocd add <spell name> | item <itemID>")
   Chat("/ocd proc <entry> riposte|surprise|off")
-  Chat("/ocd aura <entry> bladeflurry|off")
+  Chat("/ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|off")
   Chat("/ocd procstyle red|hide")
   Chat("/ocd timerfont <8-100>|reset")
   Chat("/ocd procdebug on|off|status")
@@ -2153,7 +2277,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
     if entryIndex and mode then
       OCD:SetEntryAura(active, tonumber(entryIndex), mode)
     else
-      Chat("usage: /ocd aura <entry> bladeflurry|off")
+      Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|ghostlystrike-combined|off")
     end
   elseif cmd == "procstyle" or cmd == "proc-style" then
     OCD:SetProcCooldownMode(active, rest)
@@ -2212,7 +2336,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
   elseif cmd == "reset" then
     OCD:ResetBar(active)
   elseif cmd == "resetall" then
-    OctoCooldownsDB = { version = 7, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 8, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     Chat("all settings reset")
