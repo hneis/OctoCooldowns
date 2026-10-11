@@ -215,6 +215,37 @@ Mode markers are hidden for icon sizes below 32 or when the configured timer
 font leaves too little space, avoiding overlaps with timer and item-count text.
 Alt-click and tooltip configuration remain available.
 
+### Build Changes And Passive Auras
+
+Tracked spells that are no longer learned after changing talents are preserved:
+
+- locked bars hide unavailable entries;
+- unlocked bars show them dimmed with their cached or catalog icon;
+- tooltips and `/ocd list` mark them unavailable;
+- returning to the old build restores them automatically after `SPELLS_CHANGED`.
+
+Remorseless Attacks is tracked as a synthetic aura because the active buff is
+named `Remorseless` (`Беспощадность`) and the passive talent cannot be dragged
+reliably from the Vanilla talent frame:
+
+```text
+/ocd addbuff remorseless
+```
+
+The entry is hidden while inactive and shows its actual OctoWoW buff time when
+triggered after an XP or honor kill.
+
+New Envenom (`Отравление`) entries default to aura-only and show the actual
+self-buff duration for the combo points used:
+
+```text
+/ocd add Envenom
+/ocd aura <entry> envenom
+```
+
+Existing Envenom entries keep their previous mode. Use `/ocd aura <entry> off`
+to return to normal tracking.
+
 ## Commands
 
 ```text
@@ -226,6 +257,7 @@ Alt-click and tooltip configuration remain available.
 /ocd center              Horizontally center the active bar, keeping its Y.
 /ocd centerall           Horizontally center all bars, keeping each Y.
 /ocd add <name>          Add a spell by exact spellbook name.
+/ocd addbuff remorseless Add the synthetic Remorseless aura.
 /ocd item <itemID>       Add an item by numeric item ID.
 /ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
 /ocd aura <n> <mode>     Set a supported aura mode or return it to normal.
@@ -267,6 +299,14 @@ Alt-click and tooltip configuration remain available.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.8.0
+
+- Preserve and hide unavailable spells after talent-build changes.
+- Cache the last valid spell icon and restore entries when spells are learned again.
+- Added synthetic Remorseless aura tracking with live buff duration.
+- Added Envenom aura-only tracking for OctoWoW's combo-point buff.
+- Added unavailable tooltip and `/ocd list` status.
 
 ### 0.7.0
 
