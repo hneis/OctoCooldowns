@@ -318,6 +318,14 @@ private hidden tooltip used internally for localized aura scanning.
 
 ## Changelog
 
+### 0.9.1
+
+- Deferred aura scans out of event callbacks to avoid stale Vanilla API data.
+- Added bounded aura scan retries on the next frame, at 0.10 s, and at 0.30 s.
+- Added `BUFF_UPDATE_DURATION_SELF` and `AURA_CAST_ON_SELF` scheduling hints.
+- Made aura retries and 0.50-second safety scans independent from `/ocd update`.
+- Added aura scheduler counters to `/ocd procdebug status`.
+
 ### 0.9.0
 
 - Added synthetic Relentless Strikes aura tracking with timer and stack count.

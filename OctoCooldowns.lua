@@ -1,4 +1,4 @@
--- OctoCooldowns 0.9.0
+-- OctoCooldowns 0.9.1
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -11,6 +11,7 @@ local GCD_THRESHOLD = 1.80
 local REACTIVE_DURATION = 4.00
 local REACTIVE_DUPLICATE_WINDOW = 0.50
 local AURA_SCAN_INTERVAL = 0.50
+local AURA_BURST_MIN_SPACING = 0.05
 local TIMER_FONT_PATH = "Fonts\\ARIALN.TTF"
 local TIMER_FONT_SIZE = 14
 local TIMER_FONT_FLAGS = "OUTLINE"
@@ -32,6 +33,13 @@ local auraScanTooltip = nil
 local playerAuraSnapshot = { byName = {}, bySpellID = {}, byTexture = {}, ambiguousTextures = {}, count = 0 }
 local auraScanDirty = true
 local lastAuraScan = 0
+local auraScanNextAt = nil
+local auraScanRetries = 0
+local auraScanReason = nil
+local auraLastEvent = nil
+local auraLastEventAt = 0
+local auraScanCount = 0
+local auraNextSafetyAt = 0
 local enhancedReactiveSeen = {
   autoSelf = false,
   autoOther = false,
@@ -596,11 +604,15 @@ local function GetAuraScanTooltip()
   return auraScanTooltip
 end
 
-local function RefreshPlayerAuraSnapshot(force)
+local function RefreshPlayerAuraSnapshot(force, reason)
   local now = GetTime()
+  if not force and auraScanNextAt then return end
   if not force and not auraScanDirty and now - lastAuraScan < AURA_SCAN_INTERVAL then return end
   auraScanDirty = false
   lastAuraScan = now
+  auraScanCount = auraScanCount + 1
+  auraScanReason = reason or (force and "forced" or "safety")
+  auraNextSafetyAt = now + AURA_SCAN_INTERVAL
 
   local snapshot = { byName = {}, bySpellID = {}, byTexture = {}, ambiguousTextures = {}, count = 0 }
   playerAuraSnapshot = snapshot
@@ -793,6 +805,17 @@ local function ReactiveDebugLog(message)
   if not reactiveDebug then return end
   reactiveDebugSequence = reactiveDebugSequence + 1
   Chat("procdebug #" .. reactiveDebugSequence .. " t=" .. string.format("%.3f", GetTime()) .. " " .. message)
+end
+
+local function ScheduleAuraScans(reason)
+  local now = GetTime()
+  auraScanDirty = true
+  auraLastEvent = reason or "unknown"
+  auraLastEventAt = now
+  local nextAt = math.max(now, lastAuraScan + AURA_BURST_MIN_SPACING)
+  if not auraScanNextAt or auraScanNextAt > nextAt then auraScanNextAt = nextAt end
+  if auraScanRetries < 3 then auraScanRetries = 3 end
+  ReactiveDebugLog("schedule aura scans: " .. auraLastEvent)
 end
 
 local function SourceIsEnhanced(source)
@@ -2050,7 +2073,8 @@ function OCD:SetProcDebug(mode)
       Chat("Nampower CVars: auto=" .. tostring(GetCVar("NP_EnableAutoAttackEvents"))
         .. " miss=" .. tostring(GetCVar("NP_EnableSpellMissEvents"))
         .. " go=" .. tostring(GetCVar("NP_EnableSpellGoEvents"))
-        .. " start=" .. tostring(GetCVar("NP_EnableSpellStartEvents")))
+        .. " start=" .. tostring(GetCVar("NP_EnableSpellStartEvents"))
+        .. " auraCast=" .. tostring(GetCVar("NP_EnableAuraCastEvents")))
     end
     Chat("enhanced seen: autoSelf=" .. tostring(enhancedReactiveSeen.autoSelf)
       .. " autoOther=" .. tostring(enhancedReactiveSeen.autoOther)
@@ -2068,6 +2092,11 @@ function OCD:SetProcDebug(mode)
       .. " Blade Flurry=" .. tostring(bladeState ~= nil)
       .. " Ghostly Strike=" .. tostring(ghostlyState ~= nil)
       .. " remain=" .. string.format("%.2f", ghostlyRemaining))
+    Chat("aura scheduler: scans=" .. auraScanCount
+      .. " lastReason=" .. tostring(auraScanReason)
+      .. " lastEvent=" .. tostring(auraLastEvent)
+      .. " eventAge=" .. string.format("%.3f", math.max(0, GetTime() - auraLastEventAt))
+      .. " retries=" .. auraScanRetries)
     local kinds = { "riposte", "surprise" }
     local i = 1
     while i <= table.getn(kinds) do
@@ -2329,9 +2358,9 @@ function OCD:UpdateBarCooldowns(barIndex)
   end
 end
 
-function OCD:UpdateCooldowns()
+function OCD:UpdateCooldowns(forceAuraScan, auraReason)
   if not OctoCooldownsDB then return end
-  RefreshPlayerAuraSnapshot()
+  RefreshPlayerAuraSnapshot(forceAuraScan, auraReason)
   self:ProbeReactiveStates()
   local layoutIndex = 1
   while layoutIndex <= table.getn(OctoCooldownsDB.bars) do
@@ -2346,6 +2375,34 @@ function OCD:UpdateCooldowns()
     self:UpdateBarCooldowns(i)
     i = i + 1
   end
+end
+
+function OCD:ProcessAuraScanSchedule()
+  if not OctoCooldownsDB then return false end
+  local now = GetTime()
+
+  if auraScanNextAt and now >= auraScanNextAt then
+    local retryNumber = 4 - auraScanRetries
+    auraScanNextAt = nil
+    auraScanDirty = true
+    self:UpdateCooldowns(true, "event:" .. tostring(auraLastEvent) .. ":" .. retryNumber)
+    auraScanRetries = auraScanRetries - 1
+    if auraScanRetries == 2 then
+      auraScanNextAt = now + 0.10
+    elseif auraScanRetries == 1 then
+      auraScanNextAt = now + 0.20
+    end
+    return true
+  end
+
+  if not auraScanNextAt and now >= auraNextSafetyAt then
+    auraNextSafetyAt = now + AURA_SCAN_INTERVAL
+    if HasAuraEntries() then
+      self:UpdateCooldowns(true, "safety")
+      return true
+    end
+  end
+  return false
 end
 
 function OCD:SetActive(barIndex, quiet)
@@ -2578,6 +2635,11 @@ function OCD:RegisterEnhancedReactiveEvents()
   end
   SafeRegisterEvent("BUFF_ADDED_SELF")
   SafeRegisterEvent("BUFF_REMOVED_SELF")
+  SafeRegisterEvent("BUFF_UPDATE_DURATION_SELF")
+  if NampowerAtLeast(20) then
+    if EnableNampowerEvents("NP_EnableAuraCastEvents") then reloadNeeded = true end
+    SafeRegisterEvent("AURA_CAST_ON_SELF")
+  end
 
   -- SuperWoW exposes this event; pcall keeps stock 1.12 clients safe.
   SafeRegisterEvent("UNIT_CASTEVENT")
@@ -2876,11 +2938,9 @@ OCD:SetScript("OnEvent", function()
   elseif event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
     playerInCombat = event == "PLAYER_REGEN_DISABLED"
     if OctoCooldownsDB then OCD:RebuildAll(false) end
-  elseif event == "PLAYER_AURAS_CHANGED" or event == "BUFF_ADDED_SELF" or event == "BUFF_REMOVED_SELF" then
-    if OctoCooldownsDB then
-      auraScanDirty = true
-      OCD:UpdateCooldowns()
-    end
+  elseif event == "PLAYER_AURAS_CHANGED" or event == "BUFF_ADDED_SELF" or event == "BUFF_REMOVED_SELF"
+      or event == "BUFF_UPDATE_DURATION_SELF" or event == "AURA_CAST_ON_SELF" then
+    if OctoCooldownsDB then ScheduleAuraScans(event) end
   elseif event == "UNIT_COMBAT" then
     if arg1 == "player" and arg2 == "PARRY" then OCD:ActivateReactive("riposte", nil, nil, "unit") end
   elseif event == "CHAT_MSG_COMBAT_SELF_MISSES"
@@ -2917,6 +2977,7 @@ end)
 
 OCD:SetScript("OnUpdate", function()
   updateElapsed = updateElapsed + (arg1 or 0)
+  local auraUpdated = OCD:ProcessAuraScanSchedule()
   local interval = DEFAULT_UPDATE_INTERVAL
   if OctoCooldownsDB and OctoCooldownsDB.updateInterval then
     interval = OctoCooldownsDB.updateInterval
@@ -2928,6 +2989,6 @@ OCD:SetScript("OnUpdate", function()
       bagCountsDirty = false
       OCD:RefreshItemCounts()
     end
-    OCD:UpdateCooldowns()
+    if not auraUpdated then OCD:UpdateCooldowns() end
   end
 end)
