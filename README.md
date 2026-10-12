@@ -81,7 +81,8 @@ Their English and Russian names are recognized automatically.
 - Riposte appears for 4 seconds after you parry an incoming attack.
 - Surprise Attack appears for 4 seconds after your attack is dodged.
 - Surprise Attack is shown only while targeting the enemy that dodged.
-- Active reactive abilities use a gold border and a countdown with tenths.
+- Active reactive abilities use a gold border and show tenths during the
+  configured final timer threshold.
 - A proc that is still on ability cooldown uses a red border and a dimmed icon.
 - Empty locked bars are hidden and mixed bars close gaps left by inactive procs.
 
@@ -134,7 +135,8 @@ manually:
 
 `Ghostly Strike` (`Призрачный удар`) is recognized automatically and defaults
 to combined mode. Its aura duration is read from the active player buff rather
-than assumed to be a fixed number of seconds.
+than assumed to be a fixed number of seconds. Combined Ghostly Strike entries
+hide their fully ready state by default.
 
 ```text
 /ocd aura <entry> ghostlystrike
@@ -149,24 +151,39 @@ border with the remaining aura duration while active.
 
 Combined mode uses one icon for the complete cycle:
 
-- ready spell: full brightness with no timer;
 - active Ghostly Strike aura: blue border and aura time remaining;
 - aura expired while the spell is still cooling down: dimmed icon and spell
-  cooldown remaining.
+  cooldown remaining;
+- ready spell: hidden by default, or displayed according to `/ocd ready`.
+
+Flourish is also recognized automatically and new entries default to the same
+combined lifecycle. Its actual player-buff duration is displayed for every
+combo-point duration, followed by the spell cooldown. The fully ready state is
+hidden by default.
+
+```text
+/ocd aura <entry> flourish
+/ocd aura <entry> flourish-combined
+```
+
+Existing Flourish entries keep their previous normal cooldown behavior after
+updating. Use `flourish-combined` to opt them into combined tracking.
 
 The same spell can be tracked in separate bars with different modes. Use
 `/ocd aura <entry> off` for normal cooldown-only behavior.
 
-Combined Ghostly Strike entries can hide their fully ready state while outside
-combat:
+Configure the fully ready state of any combined aura entry independently:
 
 ```text
-/ocd ooc <entry> hide
-/ocd ooc <entry> show
+/ocd ready <entry> always  Show the ready state everywhere.
+/ocd ready <entry> combat  Show it only while in combat.
+/ocd ready <entry> hide    Always hide the ready state.
 ```
 
 Only the ready, inactive state is hidden. An active aura or running cooldown
 remains visible outside combat. Unlocked bars always show the entry for editing.
+The legacy `/ocd ooc <entry> hide|show` command remains available as an alias
+for `combat|always`.
 
 ### Additional Timed Auras
 
@@ -198,7 +215,7 @@ entry to normal cooldown tracking.
 
 While a bar is unlocked, `Alt + Left Click` on a supported spell toggles between
 its aura mode and normal cooldown mode. The previous aura mode is remembered,
-including Ghostly Strike combined/aura-only and its OOC ready setting.
+including combined/aura-only mode and ready visibility.
 
 Unlocked icons show their mode in the top-left corner:
 
@@ -279,11 +296,16 @@ private hidden tooltip used internally for localized aura scanning.
 /ocd item <itemID>       Add an item by numeric item ID.
 /ocd proc <n> <mode>     Set riposte, surprise, or off for spell entry n.
 /ocd aura <n> <mode>     Set a supported aura mode or return it to normal.
-/ocd ooc <n> <mode>      Hide or show ready combined Ghostly Strike out of combat.
+/ocd ready <n> <mode>    Set ready visibility to always, combat, or hide.
+/ocd ooc <n> <mode>      Legacy alias mapping hide/show to combat/always.
 /ocd procstyle <mode>     Set red or hide for the active bar.
 /ocd procdebug <mode>     Enable, disable, or show proc diagnostics.
 /ocd timerfont <8-100>    Set timer font size for the active bar.
 /ocd timerfont reset      Restore the default timer font size.
+/ocd timerthreshold       Show the active bar's final-timer threshold.
+/ocd timerthreshold <n>   Set the threshold from 0.1 to 10 seconds.
+/ocd timerthreshold off   Disable red tenths and use white non-decimal timers.
+/ocd timerthreshold reset Restore the default two-second threshold.
 /ocd remove <n>          Remove entry n.
 /ocd move <a> <b>        Move entry a to position b.
 /ocd cols <1-12>         Set columns for the active bar.
@@ -312,11 +334,28 @@ private hidden tooltip used internally for localized aura scanning.
   `/ocd timerfont 20`; use `/ocd timerfont reset` to restore the standard
   `ARIALN` size of 14.
 - Unlocked bars show `12.3` when no real timer is active, making font-size
-  changes immediately visible. The preview disappears when the bar is locked.
+  changes immediately visible. The preview is always white and disappears when
+  the bar is locked.
+- Each bar has a two-second timer threshold by default. Below one minute,
+  timers above it use white whole seconds; at or below it, they use red tenths.
+  Longer timers keep the compact minute/hour format. Configure the threshold
+  with `/ocd timerthreshold`, or disable it with `/ocd timerthreshold off`.
 - Settings are stored per character in `OctoCooldownsDB`.
 - Dragging is the safest way to add localized spell names.
 
 ## Changelog
+
+### 0.10.0
+
+- Added Flourish aura-only and combined aura/cooldown tracking.
+- Made new Flourish entries default to combined mode without changing existing
+  Flourish entries.
+- Added per-entry `always`, `combat`, and `hide` visibility for the ready state
+  of combined aura entries.
+- Hide ready combined Ghostly Strike and Flourish entries by default while
+  keeping active auras and cooldowns visible.
+- Added a per-bar final timer threshold for red tenths, defaulting to two
+  seconds and supporting `off`.
 
 ### 0.9.1
 

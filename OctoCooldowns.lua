@@ -1,4 +1,4 @@
--- OctoCooldowns 0.9.1
+-- OctoCooldowns 0.10.0
 -- Retail-like personal cooldown bars for WoW 1.12 / OctoWoW.
 -- Lua 5.0 compatible: no # operator, no select(), old WoW event globals.
 
@@ -17,6 +17,7 @@ local TIMER_FONT_SIZE = 14
 local TIMER_FONT_FLAGS = "OUTLINE"
 local TIMER_FONT_RASTER_SIZE = 32
 local TIMER_PREVIEW_TEXT = "12.3"
+local TIMER_THRESHOLD_DEFAULT = 2
 local MODE_MARKER_FONT_SIZE = 8
 local updateElapsed = 0
 local barFrames = {}
@@ -106,7 +107,9 @@ local AURA_NAMES = {
   ["Taste for Blood"] = "tasteforblood",
   ["taste for blood"] = "tasteforblood",
   ["Вкус крови"] = "tasteforblood",
-  ["вкус крови"] = "tasteforblood"
+  ["вкус крови"] = "tasteforblood",
+  ["Flourish"] = "flourish",
+  ["flourish"] = "flourish"
 }
 
 local AURA_KINDS = {
@@ -174,6 +177,12 @@ local AURA_KINDS = {
     names = { ["Taste for Blood"] = true, ["Вкус крови"] = true },
     texture = "Interface\\Icons\\Ability_Rogue_HungerforBlood",
     displayNames = { enUS = "Taste for Blood", ruRU = "Вкус крови" }
+  },
+  flourish = {
+    timed = true,
+    spellIDs = { [47298] = true },
+    names = { ["Flourish"] = true },
+    texture = "Interface\\Icons\\Ability_DualWield"
   }
 }
 
@@ -235,6 +244,7 @@ local function AuraKindByName(name)
     if spellID == 52531 then return "envenom" end
     if spellID == 14179 or spellID == 14181 then return "relentless" end
     if spellID == 52529 then return "tasteforblood" end
+    if spellID == 47298 then return "flourish" end
   end
   return nil
 end
@@ -244,8 +254,13 @@ local function IsAuraEntry(entry)
 end
 
 local function DefaultAuraMode(kind)
-  if kind == "ghostlystrike" then return "combined" end
+  if kind == "ghostlystrike" or kind == "flourish" then return "combined" end
   return "only"
+end
+
+local function DefaultReadyVisibility(kind, mode)
+  if mode == "combined" and (kind == "ghostlystrike" or kind == "flourish") then return "hide" end
+  return "always"
 end
 
 local function DefaultNewEntryAuraMode(kind)
@@ -270,6 +285,7 @@ end
 
 local function AuraModeToken(kind, mode)
   if kind == "ghostlystrike" and mode == "combined" then return "ghostlystrike-combined" end
+  if kind == "flourish" and mode == "combined" then return "flourish-combined" end
   return kind
 end
 
@@ -392,6 +408,7 @@ local function NewBar(name, y)
   t.size = 40
   t.gap = 4
   t.timerFontSize = false
+  t.timerThreshold = TIMER_THRESHOLD_DEFAULT
   t.procCooldownMode = "red"
   t.point = "CENTER"
   t.x = 0
@@ -414,6 +431,16 @@ local function EnsureBar(bar, index)
       bar.timerFontSize = false
     end
   end
+  if bar.timerThreshold == nil then
+    bar.timerThreshold = TIMER_THRESHOLD_DEFAULT
+  elseif bar.timerThreshold ~= false then
+    local timerThreshold = tonumber(bar.timerThreshold)
+    if timerThreshold and timerThreshold >= 0.1 and timerThreshold <= 10 then
+      bar.timerThreshold = timerThreshold
+    else
+      bar.timerThreshold = TIMER_THRESHOLD_DEFAULT
+    end
+  end
   if bar.procCooldownMode ~= "hide" and bar.procCooldownMode ~= "red" then bar.procCooldownMode = "red" end
   if not bar.point then bar.point = "CENTER" end
   if bar.x == nil then bar.x = 0 end
@@ -433,7 +460,16 @@ local function EnsureBar(bar, index)
     if IsAuraEntry(entry) and entry.auraMode ~= "only" and entry.auraMode ~= "combined" then
       entry.auraMode = DefaultAuraMode(entry.aura)
     end
-    if entry.hideReadyOutOfCombat ~= true then entry.hideReadyOutOfCombat = false end
+    if entry.readyVisibility ~= "always" and entry.readyVisibility ~= "combat" and entry.readyVisibility ~= "hide" then
+      if entry.auraMode == "combined" and (entry.aura == "ghostlystrike" or entry.aura == "flourish") then
+        entry.readyVisibility = "hide"
+      elseif entry.hideReadyOutOfCombat == true then
+        entry.readyVisibility = "combat"
+      else
+        entry.readyVisibility = "always"
+      end
+    end
+    entry.hideReadyOutOfCombat = entry.readyVisibility == "combat"
     if entry.lastAura and not AURA_KINDS[entry.lastAura] then
       entry.lastAura = nil
       entry.lastAuraMode = nil
@@ -442,14 +478,23 @@ local function EnsureBar(bar, index)
     if entry.lastAura and entry.lastAuraMode ~= "only" and entry.lastAuraMode ~= "combined" then
       entry.lastAuraMode = DefaultAuraMode(entry.lastAura)
     end
-    if entry.lastHideReadyOutOfCombat ~= true then entry.lastHideReadyOutOfCombat = false end
+    if entry.lastReadyVisibility ~= "always" and entry.lastReadyVisibility ~= "combat" and entry.lastReadyVisibility ~= "hide" then
+      if entry.lastAuraMode == "combined" and (entry.lastAura == "ghostlystrike" or entry.lastAura == "flourish") then
+        entry.lastReadyVisibility = "hide"
+      elseif entry.lastHideReadyOutOfCombat == true then
+        entry.lastReadyVisibility = "combat"
+      else
+        entry.lastReadyVisibility = "always"
+      end
+    end
+    entry.lastHideReadyOutOfCombat = entry.lastReadyVisibility == "combat"
     i = i + 1
   end
 end
 
 local function EnsureDB()
   if not OctoCooldownsDB then
-    OctoCooldownsDB = { version = 13, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 14, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     return
   end
 
@@ -465,11 +510,11 @@ local function EnsureDB()
     if old.x ~= nil then bar.x = old.x end
     if old.y ~= nil then bar.y = old.y end
     if old.entries then bar.entries = old.entries end
-    OctoCooldownsDB = { version = 13, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
+    OctoCooldownsDB = { version = 14, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { bar } }
     Chat("migrated 0.1 settings to multi-bar format")
   end
 
-  OctoCooldownsDB.version = 13
+  OctoCooldownsDB.version = 14
   if not OctoCooldownsDB.updateInterval then OctoCooldownsDB.updateInterval = DEFAULT_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval < MIN_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MIN_UPDATE_INTERVAL end
   if OctoCooldownsDB.updateInterval > MAX_UPDATE_INTERVAL then OctoCooldownsDB.updateInterval = MAX_UPDATE_INTERVAL end
@@ -1002,8 +1047,10 @@ local function EntryShouldShow(entry, bar)
     if AuraEntryIsCombined(entry) then
       if AuraEntryIsActive(entry) then return true end
       if ReactiveCooldownRemaining(entry, GetTime()) > 0 then return true end
-      if entry.hideReadyOutOfCombat and not playerInCombat then return false end
-      return true
+      local readyVisibility = entry.readyVisibility or DefaultReadyVisibility(entry.aura, entry.auraMode)
+      if readyVisibility == "hide" then return false end
+      if readyVisibility == "combat" then return playerInCombat end
+      return readyVisibility == "always"
     end
     return AuraEntryIsActive(entry)
   end
@@ -1197,16 +1244,18 @@ local function RestorePosition(barIndex)
   end
 end
 
-local function FormatTime(remain)
+local function FormatTime(remain, bar)
+  local threshold = bar and bar.timerThreshold
   if remain >= 3600 then
     return math.ceil(remain / 3600) .. "h"
   elseif remain >= 60 then
     return math.ceil(remain / 60) .. "m"
-  elseif remain >= 10 then
-    return tostring(math.ceil(remain))
   elseif remain > 0 then
-    local t = math.ceil(remain * 10) / 10
-    return string.format("%.1f", t)
+    if threshold and remain <= threshold then
+      local t = math.ceil(remain * 10) / 10
+      return string.format("%.1f", t)
+    end
+    return tostring(math.ceil(remain))
   end
   return ""
 end
@@ -1228,15 +1277,31 @@ local function ApplyTimerFont(button, bar, timerText)
   end
 end
 
-local function SetTimerText(button, bar, timerText)
-  if button._ocdTimerText == timerText then return end
-  button._ocdTimerText = timerText
-  ApplyTimerFont(button, bar, timerText)
+local function SetTimerText(button, bar, timerText, remaining, isPreview)
+  if button._ocdTimerText ~= timerText then
+    button._ocdTimerText = timerText
+    ApplyTimerFont(button, bar, timerText)
+  end
+
+  local warning = false
+  local threshold = bar.timerThreshold
+  if not isPreview and timerText ~= "" and remaining and remaining > 0 and threshold and remaining <= threshold then
+    warning = true
+  end
+  local colorMode = warning and "warning" or "normal"
+  if button._ocdTimerColorMode ~= colorMode then
+    if warning then
+      button.timer:SetTextColor(1.0, 0.12, 0.12)
+    else
+      button.timer:SetTextColor(1.0, 1.0, 1.0)
+    end
+    button._ocdTimerColorMode = colorMode
+  end
 end
 
 local function TimerTextWithPreview(bar, timerText)
-  if timerText == "" and not bar.locked then return TIMER_PREVIEW_TEXT end
-  return timerText
+  if timerText == "" and not bar.locked then return TIMER_PREVIEW_TEXT, true end
+  return timerText, false
 end
 
 local function UpdateModeMarker(button, entry, bar)
@@ -1677,6 +1742,7 @@ function OCD:RebuildBar(barIndex)
         b._ocdEntry = entry
         b._ocdCooldownActive = nil
         b._ocdTimerText = nil
+        b._ocdTimerColorMode = nil
         b._ocdVisualMode = nil
         b.border:SetTexture(0, 0, 0, 1)
       end
@@ -1774,6 +1840,7 @@ function OCD:AddSpellByName(name, barIndex)
   if detectedAura and defaultAuraMode then
     e.aura = detectedAura
     e.auraMode = defaultAuraMode
+    e.readyVisibility = DefaultReadyVisibility(detectedAura, defaultAuraMode)
   elseif detectedAura then
     e.aura = false
   end
@@ -1851,6 +1918,7 @@ function OCD:SetEntryReactive(barIndex, entryIndex, mode)
   if mode then
     entry.aura = false
     entry.auraMode = nil
+    entry.readyVisibility = nil
     entry.hideReadyOutOfCombat = false
   end
   self:RebuildBar(barIndex)
@@ -1882,6 +1950,12 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
   elseif mode == "ghostlystrike-combined" or mode == "ghostly-combined" or mode == "combined" then
     auraKind = "ghostlystrike"
     auraMode = "combined"
+  elseif mode == "flourish" then
+    auraKind = "flourish"
+    auraMode = "only"
+  elseif mode == "flourish-combined" then
+    auraKind = "flourish"
+    auraMode = "combined"
   elseif mode == "evasion" or mode == "evasion-aura" then
     auraKind = "evasion"
     auraMode = "only"
@@ -1907,7 +1981,7 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
   elseif mode == "off" or mode == "none" or mode == "normal" then
     auraKind = false
   else
-    Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|combined|evasion|sprint|sliceanddice|remorseless|envenom|relentless|tasteforblood|off")
+    Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|combined|flourish|flourish-combined|evasion|sprint|sliceanddice|remorseless|envenom|relentless|tasteforblood|off")
     return false
   end
 
@@ -1923,23 +1997,38 @@ function OCD:SetEntryAura(barIndex, entryIndex, mode)
     end
   end
 
+  local previousAura = entry.aura
+  local previousAuraMode = entry.auraMode
+  local previousReadyVisibility = entry.readyVisibility
   if not auraKind and IsAuraEntry(entry) then
     entry.lastAura = entry.aura
     entry.lastAuraMode = entry.auraMode or DefaultAuraMode(entry.aura)
-    entry.lastHideReadyOutOfCombat = entry.hideReadyOutOfCombat == true
+    entry.lastReadyVisibility = entry.readyVisibility or DefaultReadyVisibility(entry.aura, entry.auraMode)
+    entry.lastHideReadyOutOfCombat = entry.lastReadyVisibility == "combat"
   end
   entry.aura = auraKind
   entry.auraMode = auraMode
-  if auraKind ~= "ghostlystrike" or auraMode ~= "combined" then
-    entry.hideReadyOutOfCombat = false
-  elseif entry.hideReadyOutOfCombat ~= true then
-    entry.hideReadyOutOfCombat = false
-  end
   if auraKind then
+    local readyVisibility = nil
+    if previousAura == auraKind and previousAuraMode == auraMode
+        and (previousReadyVisibility == "always" or previousReadyVisibility == "combat" or previousReadyVisibility == "hide") then
+      readyVisibility = previousReadyVisibility
+    elseif entry.lastAura == auraKind and entry.lastAuraMode == auraMode
+        and (entry.lastReadyVisibility == "always" or entry.lastReadyVisibility == "combat" or entry.lastReadyVisibility == "hide") then
+      readyVisibility = entry.lastReadyVisibility
+    else
+      readyVisibility = DefaultReadyVisibility(auraKind, auraMode)
+    end
+    entry.readyVisibility = readyVisibility
+    entry.hideReadyOutOfCombat = readyVisibility == "combat"
     entry.reactive = false
     entry.lastAura = auraKind
     entry.lastAuraMode = auraMode
-    entry.lastHideReadyOutOfCombat = entry.hideReadyOutOfCombat == true
+    entry.lastReadyVisibility = readyVisibility
+    entry.lastHideReadyOutOfCombat = readyVisibility == "combat"
+  else
+    entry.readyVisibility = nil
+    entry.hideReadyOutOfCombat = false
   end
   auraScanDirty = true
   RefreshPlayerAuraSnapshot(true)
@@ -1970,37 +2059,57 @@ function OCD:ToggleEntryAura(barIndex, entryIndex)
 
   local auraMode = entry.lastAuraMode
   if auraMode ~= "only" and auraMode ~= "combined" then auraMode = DefaultAuraMode(auraKind) end
-  local restoreHide = entry.lastHideReadyOutOfCombat == true
-  local changed = self:SetEntryAura(barIndex, entryIndex, AuraModeToken(auraKind, auraMode))
-  if changed and auraKind == "ghostlystrike" and auraMode == "combined" then
-    entry.hideReadyOutOfCombat = restoreHide
-    entry.lastHideReadyOutOfCombat = restoreHide
-    self:RebuildBar(barIndex)
-  end
-  return changed
+  return self:SetEntryAura(barIndex, entryIndex, AuraModeToken(auraKind, auraMode))
 end
 
 function OCD:SetEntryOOCReady(barIndex, entryIndex, mode)
   local bar = GetBar(barIndex)
   local entry = bar and bar.entries[entryIndex]
-  if not entry or entry.aura ~= "ghostlystrike" or entry.auraMode ~= "combined" then
-    Chat("ooc setting requires a combined Ghostly Strike entry")
+  if not entry or not AuraEntryIsCombined(entry) then
+    Chat("ooc setting requires a combined aura entry")
     return false
   end
 
   mode = string.lower(Trim(mode or ""))
   if mode == "hide" then
-    entry.hideReadyOutOfCombat = true
+    entry.readyVisibility = "combat"
   elseif mode == "show" then
-    entry.hideReadyOutOfCombat = false
+    entry.readyVisibility = "always"
   else
     Chat("usage: /ocd ooc <entry> hide|show")
     return false
   end
 
+  entry.hideReadyOutOfCombat = entry.readyVisibility == "combat"
+  entry.lastReadyVisibility = entry.readyVisibility
   entry.lastHideReadyOutOfCombat = entry.hideReadyOutOfCombat
   self:RebuildBar(barIndex)
-  Chat("ready Ghostly Strike outside combat: " .. (entry.hideReadyOutOfCombat and "hidden" or "shown"))
+  Chat("ready aura outside combat: " .. (entry.hideReadyOutOfCombat and "hidden" or "shown"))
+  return true
+end
+
+function OCD:SetEntryReadyVisibility(barIndex, entryIndex, mode)
+  local bar = GetBar(barIndex)
+  local entry = bar and bar.entries[entryIndex]
+  if not entry or not AuraEntryIsCombined(entry) then
+    Chat("ready setting requires a combined aura entry")
+    return false
+  end
+
+  mode = string.lower(Trim(mode or ""))
+  if mode == "show" then mode = "always" end
+  if mode == "never" then mode = "hide" end
+  if mode ~= "always" and mode ~= "combat" and mode ~= "hide" then
+    Chat("usage: /ocd ready <entry> always|combat|hide")
+    return false
+  end
+
+  entry.readyVisibility = mode
+  entry.hideReadyOutOfCombat = mode == "combat"
+  entry.lastReadyVisibility = mode
+  entry.lastHideReadyOutOfCombat = mode == "combat"
+  self:RebuildBar(barIndex)
+  Chat("ready aura visibility: " .. mode)
   return true
 end
 
@@ -2045,6 +2154,40 @@ function OCD:SetTimerFontSize(barIndex, value)
   bar.timerFontSize = math.floor(fontSize + 0.5)
   self:RebuildBar(barIndex)
   Chat("timer font size for [" .. bar.name .. "]: " .. bar.timerFontSize)
+  return true
+end
+
+function OCD:SetTimerThreshold(barIndex, value)
+  local bar = GetBar(barIndex)
+  if not bar then return false end
+  value = string.lower(Trim(value or ""))
+  if value == "" then
+    local current = "off"
+    if bar.timerThreshold then current = tostring(bar.timerThreshold) end
+    Chat("timer threshold for [" .. bar.name .. "]: " .. current .. " sec")
+    return true
+  end
+  if value == "off" or value == "none" then
+    bar.timerThreshold = false
+    self:RebuildBar(barIndex)
+    Chat("timer threshold for [" .. bar.name .. "]: off")
+    return true
+  end
+  if value == "reset" or value == "default" then
+    bar.timerThreshold = TIMER_THRESHOLD_DEFAULT
+    self:RebuildBar(barIndex)
+    Chat("timer threshold for [" .. bar.name .. "]: " .. TIMER_THRESHOLD_DEFAULT .. " sec")
+    return true
+  end
+
+  local threshold = tonumber(value)
+  if not threshold or threshold < 0.1 or threshold > 10 then
+    Chat("timer threshold: 0.1-10, off, or reset")
+    return false
+  end
+  bar.timerThreshold = threshold
+  self:RebuildBar(barIndex)
+  Chat("timer threshold for [" .. bar.name .. "]: " .. threshold .. " sec")
   return true
 end
 
@@ -2222,7 +2365,8 @@ function OCD:UpdateBarCooldowns(barIndex)
           b.count:SetText("")
           b._ocdCountText = ""
         end
-        SetTimerText(b, bar, TimerTextWithPreview(bar, ""))
+        local timerText, isPreview = TimerTextWithPreview(bar, "")
+        SetTimerText(b, bar, timerText, nil, isPreview)
       elseif IsAuraEntry(e) then
         local auraState = FindAuraEntryState(e)
         local auraActive = auraState ~= nil
@@ -2262,13 +2406,17 @@ function OCD:UpdateBarCooldowns(barIndex)
           b._ocdCooldownActive = nil
         end
         local timerText = ""
+        local timerRemaining = nil
         if auraActive and auraKind and auraKind.timed and auraRemaining > 0 then
-          timerText = FormatTime(auraRemaining)
+          timerRemaining = auraRemaining
+          timerText = FormatTime(auraRemaining, bar)
         elseif not auraActive and AuraEntryIsCombined(e) and cooldownRemaining > 0 then
-          timerText = FormatTime(cooldownRemaining)
+          timerRemaining = cooldownRemaining
+          timerText = FormatTime(cooldownRemaining, bar)
         end
-        timerText = TimerTextWithPreview(bar, timerText)
-        SetTimerText(b, bar, timerText)
+        local isPreview = false
+        timerText, isPreview = TimerTextWithPreview(bar, timerText)
+        SetTimerText(b, bar, timerText, timerRemaining, isPreview)
         local countText = ""
         if auraActive and auraKind and auraKind.showStacks then
           local stacks = tonumber(auraState.stacks) or 0
@@ -2289,8 +2437,13 @@ function OCD:UpdateBarCooldowns(barIndex)
           if cooldownRemain > 0 then visualState = "cooldown" else visualState = "ready" end
         end
         local timerText = ""
-        if reactiveActive then timerText = FormatTime(remain) end
-        timerText = TimerTextWithPreview(bar, timerText)
+        local timerRemaining = nil
+        if reactiveActive then
+          timerRemaining = remain
+          timerText = FormatTime(remain, bar)
+        end
+        local isPreview = false
+        timerText, isPreview = TimerTextWithPreview(bar, timerText)
 
         if b._ocdVisualMode ~= "reactive" or b._ocdReactiveVisual ~= visualState then
           if visualState == "ready" then
@@ -2307,7 +2460,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           b._ocdReactiveVisual = visualState
           b._ocdAuraVisual = nil
         end
-        SetTimerText(b, bar, timerText)
+        SetTimerText(b, bar, timerText, timerRemaining, isPreview)
       else
         if b._ocdVisualMode ~= "cooldown" then
           b._ocdVisualMode = "cooldown"
@@ -2339,9 +2492,10 @@ function OCD:UpdateBarCooldowns(barIndex)
         local timerText = ""
         if remain > 0.05 then
           cooldownActive = true
-          timerText = FormatTime(remain)
+          timerText = FormatTime(remain, bar)
         end
-        timerText = TimerTextWithPreview(bar, timerText)
+        local isPreview = false
+        timerText, isPreview = TimerTextWithPreview(bar, timerText)
 
         if b._ocdCooldownActive ~= cooldownActive then
           if cooldownActive then
@@ -2351,7 +2505,7 @@ function OCD:UpdateBarCooldowns(barIndex)
           end
           b._ocdCooldownActive = cooldownActive
         end
-        SetTimerText(b, bar, timerText)
+        SetTimerText(b, bar, timerText, cooldownActive and remain or nil, isPreview)
       end
     end
     i = i + 1
@@ -2470,7 +2624,9 @@ function OCD:List(barIndex)
       if e.reactive then reactiveLabel = " [proc: " .. e.reactive .. "]" end
       local auraLabel = ""
       if e.aura then auraLabel = " [aura: " .. e.aura .. "/" .. tostring(e.auraMode or DefaultAuraMode(e.aura)) .. "]" end
-      if e.hideReadyOutOfCombat then auraLabel = auraLabel .. " [ooc-ready:hidden]" end
+      if AuraEntryIsCombined(e) and e.readyVisibility and e.readyVisibility ~= "always" then
+        auraLabel = auraLabel .. " [ready:" .. e.readyVisibility .. "]"
+      end
       if IsUnavailableSpell(e) then auraLabel = auraLabel .. " [unavailable]" end
       local entryType = e.kind == "aura" and "aura" or "spell"
       Chat(i .. ". " .. entryType .. ": " .. (e.name or "?") .. reactiveLabel .. auraLabel)
@@ -2717,10 +2873,12 @@ local function Help()
   Chat("/ocd add <spell name> | item <itemID>")
   Chat("/ocd addbuff remorseless|relentless|tasteforblood")
   Chat("/ocd proc <entry> riposte|surprise|off")
-  Chat("/ocd aura <entry> bladeflurry|ghostlystrike|combined|evasion|sprint|sliceanddice|remorseless|envenom|relentless|tasteforblood|off")
+  Chat("/ocd aura <entry> bladeflurry|ghostlystrike|combined|flourish|flourish-combined|evasion|sprint|sliceanddice|remorseless|envenom|relentless|tasteforblood|off")
+  Chat("/ocd ready <entry> always|combat|hide")
   Chat("/ocd ooc <entry> hide|show")
   Chat("/ocd procstyle red|hide")
   Chat("/ocd timerfont <8-100>|reset")
+  Chat("/ocd timerthreshold <0.1-10>|off|reset")
   Chat("/ocd procdebug on|off|status")
   Chat("/ocd remove <number> | move <from> <to>")
   Chat("/ocd cols <1-12> | size <20-80> | gap <0-20>")
@@ -2801,7 +2959,14 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
     if entryIndex and mode then
       OCD:SetEntryAura(active, tonumber(entryIndex), mode)
     else
-      Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|combined|evasion|sprint|sliceanddice|remorseless|envenom|relentless|tasteforblood|off")
+      Chat("usage: /ocd aura <entry> bladeflurry|ghostlystrike|combined|flourish|flourish-combined|evasion|sprint|sliceanddice|remorseless|envenom|relentless|tasteforblood|off")
+    end
+  elseif cmd == "ready" then
+    local _, _, entryIndex, mode = string.find(rest, "^(%d+)%s+(%S+)$")
+    if entryIndex and mode then
+      OCD:SetEntryReadyVisibility(active, tonumber(entryIndex), mode)
+    else
+      Chat("usage: /ocd ready <entry> always|combat|hide")
     end
   elseif cmd == "ooc" then
     local _, _, entryIndex, mode = string.find(rest, "^(%d+)%s+(%S+)$")
@@ -2814,6 +2979,8 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
     OCD:SetProcCooldownMode(active, rest)
   elseif cmd == "timerfont" or cmd == "fontsize" or cmd == "font" then
     OCD:SetTimerFontSize(active, rest)
+  elseif cmd == "timerthreshold" or cmd == "timer-threshold" then
+    OCD:SetTimerThreshold(active, rest)
   elseif cmd == "procdebug" or cmd == "proc-debug" then
     OCD:SetProcDebug(rest)
   elseif cmd == "remove" or cmd == "rm" then
@@ -2867,7 +3034,7 @@ SlashCmdList["OCTOCOOLDOWNS"] = function(msg)
   elseif cmd == "reset" then
     OCD:ResetBar(active)
   elseif cmd == "resetall" then
-    OctoCooldownsDB = { version = 13, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
+    OctoCooldownsDB = { version = 14, active = 1, updateInterval = DEFAULT_UPDATE_INTERVAL, bars = { NewBar("Main", -120) } }
     OCD:ClearReactiveStates(false)
     OCD:RebuildAll(true)
     Chat("all settings reset")
